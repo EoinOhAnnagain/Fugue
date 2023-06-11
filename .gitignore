@@ -1,3 +1,14 @@
+# MISC______
+
+DS_Store
+.DS_Store
+vscode
+.vscode
+config.py
+
+
+# Python______
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
