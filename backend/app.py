@@ -74,7 +74,6 @@ def enterQueue():
 
     else:
         return 'an error occured', 404
-        
 
 
 if __name__ == '__main__':
