@@ -35,14 +35,8 @@ def getQueueNames(cursor):
     queues = cursor.fetchall()
     returnable = []
     for q in queues:
-        print(q)
-        print(q[0])
         returnable.append(q[0])
-    print(queues)
-    print(returnable)
     return returnable
-    
-
 
 
 
@@ -54,11 +48,8 @@ def index():
 @getStarted
 def getQueues(db, cursor):
 
-    print("test")
-
     if db != False:
 
-        print('db found')
         # Get Employee data as a list of dictionaries and turn it into a JSON object
         json_dump = jsonify(getQueueNames(cursor))
 
@@ -68,8 +59,6 @@ def getQueues(db, cursor):
         cursor.close()
         db.close()
 
-        print("oh yeah")
-
         # Return JSON and status code
         return json_dump, 200
     else:
@@ -77,15 +66,11 @@ def getQueues(db, cursor):
         db.close()
         return jsonify({'Error': "Database Connection Error"}), 502
 
-    
-
-
 
 @app.route('/checkFullQueue', methods=['GET'])
-def checkFullQueue():
-    db = create_db_connection()
+@getStarted
+def checkFullQueue(db, cursor):
     if db:
-        cursor = db.cursor()
         cursor.execute("SELECT * FROM `Queue`")
         test = cursor.fetchall()
         # Get Employee data as a list of dictionaries and turn it into a JSON object
@@ -98,15 +83,16 @@ def checkFullQueue():
         # Return JSON and status code
         return json_dump, 200
     else:
+        cursor.close()
+        db.close()
         return "an error occured", 404
 
 
 @app.route('/enterQueue', methods=['POST'])
-def enterQueue():
-    db = create_db_connection()
+@getStarted
+def enterQueue(db, cursor):
     if db:
         try:
-            cursor = db.cursor()
             UUID = str(uuid.uuid4().hex)
             
             entryQuery = ("INSERT INTO Queue (`UUID`, `Ticket`, `Description`, `Componant`, `Team Name`, `Email`, `First Name`, `Last Name`, `Active`, `Position`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
@@ -128,6 +114,8 @@ def enterQueue():
         return "Successfully intered in queue, your posiiton is " + request.json['Position'], 200
 
     else:
+        cursor.close()
+        db.close()
         return 'an error occured', 404
 
 
