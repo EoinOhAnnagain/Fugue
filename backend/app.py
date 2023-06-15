@@ -106,6 +106,26 @@ def checkQueue(db, cursor):
 
                 return queueName + " is empty", 200
 
+
+            if request.json['simple'].lower() == 'false':
+
+                json_dump = jsonify(queue)
+
+                cursor.close()
+                db.close()
+
+                return json_dump, 200
+
+            elif request.json['simple'].lower() != 'true':
+
+                cursor.close()
+                db.close()
+
+                return "True or false? Your Spelling Sucks", 403
+
+
+
+
             returnable = []
             for q in queue:
                 entry = {
