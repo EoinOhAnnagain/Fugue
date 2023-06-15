@@ -1,3 +1,4 @@
+from itertools import count
 from textwrap import wrap
 from flask import Flask, request, jsonify
 import config, uuid, mysql.connector
@@ -44,11 +45,11 @@ def getQueueNames(cursor):
 def index():
     return 'Hello :)' + str(uuid.uuid4().hex) + ':P'
 
-@app.route('/getQueueNames')
+@app.route('/getQueueNames', methods=['GET'])
 @getStarted
 def getQueues(db, cursor):
 
-    if db != False:
+    if db:
 
         # Get Employee data as a list of dictionaries and turn it into a JSON object
         json_dump = jsonify(getQueueNames(cursor))
@@ -88,6 +89,54 @@ def checkFullQueue(db, cursor):
         return "an error occured", 404
 
 
+@app.route('/checkQueue', methods=['GET'])
+@getStarted
+def checkQueue(db, cursor):
+    if db:
+        try:
+            queueName = request.json['queueName']
+
+            cursor.execute("SELECT * FROM `" + queueName + "`")
+            queue = cursor.fetchall()
+
+            if len(queue) == 0:
+            
+                cursor.close()
+                db.close()
+
+                return queueName + " is empty", 200
+
+            returnable = []
+            for q in queue:
+                entry = {
+                    "user": q[3],
+                    "ticket": q[1],
+                    "position": q[6],
+                    }
+                returnable.append(entry)
+            returnable.reverse()
+            
+            json_dump = jsonify(returnable)
+
+
+            cursor.close()
+            db.close()
+            return json_dump, 200
+
+        except:
+            cursor.close()
+            db.close()
+            print("something went wrong")
+            return "something went wrong", 520
+
+    else:
+        cursor.close()
+        db.close()
+        return 'an error occured', 500
+    
+
+
+
 @app.route('/enterQueue', methods=['POST'])
 @getStarted
 def enterQueue(db, cursor):
@@ -107,16 +156,20 @@ def enterQueue(db, cursor):
             # Close db connection
             cursor.close()
             db.close()
-        except:
-            print("something went wrong")
-            return "something went wrong", 
 
-        return "Successfully intered in queue, your posiiton is " + request.json['Position'], 200
+            return "Successfully intered in queue, your posiiton is " + request.json['Position'], 200
+        except:
+            cursor.close()
+            db.close()
+            print("something went wrong")
+            return "something went wrong", 520
+
+        
 
     else:
         cursor.close()
         db.close()
-        return 'an error occured', 404
+        return 'an error occured', 500
 
 
 if __name__ == '__main__':
