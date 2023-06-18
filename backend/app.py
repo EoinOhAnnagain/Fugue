@@ -39,6 +39,22 @@ def getQueueNames(cursor):
         returnable.append(q[0])
     return returnable
 
+""" Method to convert a bool to a tinyint for storage in mysql database. True becomes 1 and Flase becomes 0. Expects a boolean """
+def bool_to_tiny(x):
+    if str(x).lower() == "true":
+        return "1"
+    else:
+        return "0"
+
+""" Method to convert a tinyint to a bool for returning to the user. 0 becomes False. Anything else becomes True. Expects an int """
+def tiny_to_bool(x):
+    if x == 0:
+        return False
+    else:
+        return True
+
+
+
 
 
 @app.route('/')
@@ -72,18 +88,59 @@ def getQueues(db, cursor):
 @getStarted
 def checkFullQueue(db, cursor):
     if db:
-        cursor.execute("SELECT * FROM `Queue`")
-        test = cursor.fetchall()
-        
-        json_dump = jsonify(test)
 
+        if request.json['simple'].lower() == 'true':
+            cursor.execute("SELECT ticket, email, active, componant FROM `masterQueue`")
+        elif request.json['simple'].lower() != 'false':
+
+            cursor.close()
+            db.close()
+
+            return "True or false? Your Spelling Sucks", 403
+        else:
+            cursor.execute("SELECT * FROM `masterQueue`")
+
+        entries = cursor.fetchall()
+
+
+        returnable = []
+        entry = {}
         
+        if request.json['simple'].lower() == 'false': 
+
+            cursor.execute("DESCRIBE `masterQueue`")
+            names = cursor.fetchall()
+            
+            for e in entries:
+                for i in range(0, len(e)):
+                    entry[names[i][0]] = e[i]
+                returnable.append(entry.copy())
+            returnable.reverse()
+
+            json_dump = jsonify(returnable)
+
+        else:
+
+            for e in entries:
+                entry = {
+                    "ticket": e[0],
+                    "email": e[1],
+                    "active": tiny_to_bool(e[2]),
+                    "componant": e[3]
+                }
+
+                returnable.append(entry.copy())
+            returnable.reverse()
+
+            json_dump = jsonify(returnable)
+
         cursor.close()
         db.close()
 
-        
         return json_dump, 200
+
     else:
+
         cursor.close()
         db.close()
         return "an error occured", 404
@@ -94,49 +151,59 @@ def checkFullQueue(db, cursor):
 def checkQueue(db, cursor):
     if db:
         try:
-            queueName = request.json['queueName']
-
-            cursor.execute("SELECT * FROM `" + queueName.lower() + "`")
-            queue = cursor.fetchall()
-
-            if len(queue) == 0:
             
-                cursor.close()
-                db.close()
+            queueName = request.json['queueName'].lower()
 
-                return queueName.lower() + " is empty", 200
-
-
+            
             if request.json['simple'].lower() == 'false':
-
-                json_dump = jsonify(queue)
-
-                cursor.close()
-                db.close()
-
-                return json_dump, 200
-
+                cursor.execute("SELECT * FROM `" + queueName + "`")
             elif request.json['simple'].lower() != 'true':
 
                 cursor.close()
                 db.close()
 
                 return "True or false? Your Spelling Sucks", 403
-
-
-
-
-            returnable = []
-            for q in queue:
-                entry = {
-                    "user": q[3],
-                    "ticket": q[1],
-                    "position": q[6],
-                    }
-                returnable.append(entry)
-            returnable.reverse()
+            else:
+                cursor.execute("SELECT email, ticket, position FROM `" + queueName + "`")
             
-            json_dump = jsonify(returnable)
+            entries = cursor.fetchall()
+
+            if len(entries) == 0:
+            
+                cursor.close()
+                db.close()
+
+                return queueName.lower() + " is empty", 200
+    
+            returnable = []
+            entry = {}
+            
+            if request.json['simple'].lower() == 'false': 
+
+                cursor.execute("DESCRIBE `" + queueName + "`")
+                names = cursor.fetchall()
+                
+                for e in entries:
+                    for i in range(0, len(e)):
+                        entry[names[i][0]] = e[i]
+                    returnable.append(entry.copy())
+                returnable.reverse()
+
+                json_dump = jsonify(returnable)
+
+            else:
+
+                for e in entries:
+                    entry = {
+                        "ticket": e[0],
+                        "email": e[1],
+                        "position": e[2],
+                    }
+                    
+                    returnable.append(entry.copy())
+                returnable.reverse()
+
+                json_dump = jsonify(returnable)
 
 
             cursor.close()
