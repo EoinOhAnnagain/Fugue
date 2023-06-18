@@ -68,20 +68,20 @@ def getQueues(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
-@app.route('/checkFullQueue', methods=['GET'])
+@app.route('/checkMasterQueue', methods=['GET'])
 @getStarted
 def checkFullQueue(db, cursor):
     if db:
         cursor.execute("SELECT * FROM `Queue`")
         test = cursor.fetchall()
-        # Get Employee data as a list of dictionaries and turn it into a JSON object
+        
         json_dump = jsonify(test)
 
-        # Close db connection
+        
         cursor.close()
         db.close()
 
-        # Return JSON and status code
+        
         return json_dump, 200
     else:
         cursor.close()
@@ -96,7 +96,7 @@ def checkQueue(db, cursor):
         try:
             queueName = request.json['queueName']
 
-            cursor.execute("SELECT * FROM `" + queueName + "`")
+            cursor.execute("SELECT * FROM `" + queueName.lower() + "`")
             queue = cursor.fetchall()
 
             if len(queue) == 0:
@@ -104,7 +104,7 @@ def checkQueue(db, cursor):
                 cursor.close()
                 db.close()
 
-                return queueName + " is empty", 200
+                return queueName.lower() + " is empty", 200
 
 
             if request.json['simple'].lower() == 'false':
