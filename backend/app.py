@@ -1,7 +1,7 @@
 from itertools import count
 from textwrap import wrap
 from flask import Flask, request, jsonify
-import config, uuid, mysql.connector
+import config, uuid, mysql.connector, hashlib
 from mysql.connector import errorcode
 from functools import wraps
 
@@ -39,6 +39,13 @@ def getQueueNames(cursor):
         returnable.append(q[0])
     return returnable
 
+""" Method to has password provided by user. Uses username and salts from confid file. Takes in a username and password """
+def password_hash(user, password):
+    password = hashlib.md5((password+user).encode())
+    for salt in config.salts:
+        password = hashlib.md5((password.hexdigest()+salt).encode())
+    return password.hexdigest()
+
 """ Method to convert a bool to a tinyint for storage in mysql database. True becomes 1 and Flase becomes 0. Expects a boolean """
 def bool_to_tiny(x):
     if str(x).lower() == "true":
@@ -53,13 +60,85 @@ def tiny_to_bool(x):
     else:
         return True
 
+def checkUUID(cursor, employeeUUID=False, ticketUUID=False):
+    if employeeUUID:
+        cursor.execute("SELECT COUNT(*) from `Users` WHERE `UUID` = %s", (employeeUUID,))
+    
+    if cursor.fetchall()[0][0] == 1:
+        return True
+    else:
+        return False
 
+def checkUser(cursor, email, hashedPassword=False):
+    if hashedPassword:
+        print('HP')
+    else:
+        cursor.execute("SELECT COUNT(*) from `Users` WHERE `email` = %s", (email,))
+
+
+def closeConnection(db, cursor):
+    cursor.close()
+    db.close()
+
+def testUserInputString(db, cursor, string, key, length):
+    if type(string) != str:
+        closeConnection(db, cursor)
+        return key + " isn't string"
+    elif len(request.json["firstName"]) > length:
+        closeConnection(db, cursor)
+        return key + " is too long"
+    elif len(request.json["firstName"]) < 3:
+        closeConnection(db, cursor)
+        return key + " is too short"
+    elif key == 'email' and (string[-10:] != '@datto.com' and string[-11:] != '@kaseya.com'):
+        closeConnection(db, cursor)
+        return "Bad email submitted"
+    else:
+        return False
 
 
 
 @app.route('/')
 def index():
-    return 'Hello :)' + str(uuid.uuid4().hex) + ':P'
+
+    return 'Hello :) ' + password_hash('fdsfds', 'test') + ' :P'
+
+@app.route('/register', methods=['POST'])
+@getStarted
+def registerNewUser(db, cursor):
+
+    if db:
+
+        UUID = '5baec0159dfd4b379e3be127902e8dab'
+        while checkUUID(cursor, employeeUUID=UUID):
+            UUID = str(uuid.uuid4().hex)
+
+        print(UUID)
+
+        if testUserInputString(db, cursor, request.json['firstName'], 'firstName', 45) != False:
+            return testUserInputString(db, cursor, request.json['firstName'], 'firstName', 45), 400
+        if testUserInputString(db, cursor, request.json['lastName'], 'lastName', 45) != False:
+            return testUserInputString(db, cursor, request.json['lastName'], 'lastName', 45), 400
+        if testUserInputString(db, cursor, request.json['email'], 'email', 100) != False:
+            return testUserInputString(db, cursor, request.json['email'], 'email', 100), 400
+        if testUserInputString(db, cursor, request.json['team'], 'team', 45) != False:
+            return testUserInputString(db, cursor, request.json['team'], 'team', 45), 400
+
+        hashedPassword = password_hash(request.json['email'], request.json['password'])
+
+        # Create query
+        addUser = ("INSERT INTO Users (`UUID`, `firstName`, `lastName`, `email`, `password`, `team`) VALUES (%s, %s, %s, %s, %s, %s)")
+        userData = (UUID, request.json['firstName'], request.json['lastName'], request.json['email'], hashedPassword, request.json['team'])
+
+        # Execute and commit query
+        cursor.execute(addUser, userData)
+        db.commit()
+
+        closeConnection(db, cursor)
+
+        return "User Created", 200
+
+
 
 @app.route('/getQueueNames', methods=['GET'])
 @getStarted
@@ -73,14 +152,13 @@ def getQueues(db, cursor):
         print(json_dump)
 
         # Close db connection
-        cursor.close()
-        db.close()
+        closeConnection(db, cursor)
 
         # Return JSON and status code
         return json_dump, 200
     else:
-        cursor.close()
-        db.close()
+        closeConnection(db, cursor)
+         
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
@@ -93,8 +171,7 @@ def checkFullQueue(db, cursor):
             cursor.execute("SELECT ticket, email, active, componant FROM `masterQueue`")
         elif request.json['simple'].lower() != 'false':
 
-            cursor.close()
-            db.close()
+            closeConnection(db, cursor)
 
             return "True or false? Your Spelling Sucks", 403
         else:
@@ -134,15 +211,15 @@ def checkFullQueue(db, cursor):
 
             json_dump = jsonify(returnable)
 
-        cursor.close()
-        db.close()
+        closeConnection(db, cursor)
+         
 
         return json_dump, 200
 
     else:
 
-        cursor.close()
-        db.close()
+        closeConnection(db, cursor)
+         
         return "an error occured", 404
 
 
@@ -159,8 +236,8 @@ def checkQueue(db, cursor):
                 cursor.execute("SELECT * FROM `" + queueName + "`")
             elif request.json['simple'].lower() != 'true':
 
-                cursor.close()
-                db.close()
+                closeConnection(db, cursor)
+                 
 
                 return "True or false? Your Spelling Sucks", 403
             else:
@@ -170,8 +247,8 @@ def checkQueue(db, cursor):
 
             if len(entries) == 0:
             
-                cursor.close()
-                db.close()
+                closeConnection(db, cursor)
+                 
 
                 return queueName.lower() + " is empty", 200
     
@@ -206,19 +283,16 @@ def checkQueue(db, cursor):
                 json_dump = jsonify(returnable)
 
 
-            cursor.close()
-            db.close()
+            closeConnection(db, cursor)
             return json_dump, 200
 
         except:
-            cursor.close()
-            db.close()
+            closeConnection(db, cursor)
             print("something went wrong")
             return "something went wrong", 520
 
     else:
-        cursor.close()
-        db.close()
+        closeConnection(db, cursor)
         return 'an error occured', 500
     
 
@@ -241,21 +315,18 @@ def enterQueue(db, cursor):
             print('test4')
 
             # Close db connection
-            cursor.close()
-            db.close()
+            closeConnection(db, cursor)
 
             return "Successfully intered in queue, your posiiton is " + request.json['Position'], 200
         except:
-            cursor.close()
-            db.close()
+            closeConnection(db, cursor)
             print("something went wrong")
             return "something went wrong", 520
 
         
 
     else:
-        cursor.close()
-        db.close()
+        closeConnection(db, cursor)
         return 'an error occured', 500
 
 
