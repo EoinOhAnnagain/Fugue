@@ -96,7 +96,7 @@ def checkQueue(db, cursor):
         try:
             queueName = request.json['queueName']
 
-            cursor.execute("SELECT * FROM `" + queueName.lower() + "`")
+            cursor.execute("SELECT * FROM `" + queueName + "`")
             queue = cursor.fetchall()
 
             if len(queue) == 0:
