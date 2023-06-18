@@ -63,7 +63,9 @@ def tiny_to_bool(x):
 def checkUUID(cursor, employeeUUID=False, ticketUUID=False):
     if employeeUUID:
         cursor.execute("SELECT COUNT(*) from `Users` WHERE `UUID` = %s", (employeeUUID,))
-    
+    elif ticketUUID:
+        cursor.execute("SELECT COUNT(*) from `masterQueue` WHERE `UUID` = %s", (ticketUUID,))
+
     if cursor.fetchall()[0][0] == 1:
         return True
     else:
@@ -75,6 +77,10 @@ def checkUser(cursor, email, hashedPassword=False):
     else:
         cursor.execute("SELECT COUNT(*) from `Users` WHERE `email` = %s", (email,))
 
+    if cursor.fetchall()[0][0] == 1:
+        return True
+    else:
+        return False
 
 def closeConnection(db, cursor):
     cursor.close()
@@ -96,6 +102,12 @@ def testUserInputString(db, cursor, string, key, length):
     else:
         return False
 
+def loginUser(cursor, email, password):
+    cursor.execute("SELECT COUNT(*) from `Users` WHERE `email` = %s AND `password` = %s", (email, password_hash(password)))
+    if cursor.fetchall()[0][0] == 1:
+        return True
+    else:
+        return False
 
 
 @app.route('/')
@@ -109,26 +121,27 @@ def registerNewUser(db, cursor):
 
     if db:
 
-        UUID = '5baec0159dfd4b379e3be127902e8dab'
+        UUID = str(uuid.uuid4().hex)
         while checkUUID(cursor, employeeUUID=UUID):
             UUID = str(uuid.uuid4().hex)
 
-        print(UUID)
-
-        if testUserInputString(db, cursor, request.json['firstName'], 'firstName', 45) != False:
-            return testUserInputString(db, cursor, request.json['firstName'], 'firstName', 45), 400
-        if testUserInputString(db, cursor, request.json['lastName'], 'lastName', 45) != False:
-            return testUserInputString(db, cursor, request.json['lastName'], 'lastName', 45), 400
+        if checkUser(cursor, request.json['email']):
+            return "email is already in user", 400
+        
+        if testUserInputString(db, cursor, request.json['firstName'].lower(), 'firstName', 45) != False:
+            return testUserInputString(db, cursor, request.json['firstName'].lower(), 'firstName', 45), 400
+        if testUserInputString(db, cursor, request.json['lastName'].lower(), 'lastName', 45) != False:
+            return testUserInputString(db, cursor, request.json['lastName'].lower(), 'lastName', 45), 400
         if testUserInputString(db, cursor, request.json['email'], 'email', 100) != False:
             return testUserInputString(db, cursor, request.json['email'], 'email', 100), 400
-        if testUserInputString(db, cursor, request.json['team'], 'team', 45) != False:
-            return testUserInputString(db, cursor, request.json['team'], 'team', 45), 400
+        if testUserInputString(db, cursor, request.json['team'].lower(), 'team', 45) != False:
+            return testUserInputString(db, cursor, request.json['team'].lower(), 'team', 45), 400
 
         hashedPassword = password_hash(request.json['email'], request.json['password'])
 
         # Create query
         addUser = ("INSERT INTO Users (`UUID`, `firstName`, `lastName`, `email`, `password`, `team`) VALUES (%s, %s, %s, %s, %s, %s)")
-        userData = (UUID, request.json['firstName'], request.json['lastName'], request.json['email'], hashedPassword, request.json['team'])
+        userData = (UUID, request.json['firstName'].lower(), request.json['lastName'].lower(), request.json['email'], hashedPassword, request.json['team'])
 
         # Execute and commit query
         cursor.execute(addUser, userData)
@@ -303,16 +316,30 @@ def checkQueue(db, cursor):
 def enterQueue(db, cursor):
     if db:
         try:
+            '''IS EVERYTHING CHECKED HERE?????'''
+            if loginUser(cursor, request.json['email'], request.json['password']) == False:
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            cursor.execute("SELECT firstName, lastName, team FROM `Users`")
+            userDetails = cursor.fetchall()
+
+            if request.json['componant'].lower() not in getQueueNames(cursor):
+                closeConnection(db, cursor)
+                return "Unknown"
+
+            cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "`")
+            numberInQueue = cursor.fetchall()
+
             UUID = str(uuid.uuid4().hex)
+            while checkUUID(cursor, ticketUUID=UUID):
+                UUID = str(uuid.uuid4().hex)
             
             entryQuery = ("INSERT INTO Queue (`UUID`, `Ticket`, `Description`, `Componant`, `Team Name`, `Email`, `First Name`, `Last Name`, `Active`, `Position`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
-            entryData = (UUID, request.json['Ticket'], request.json['Description'], request.json['Componant'], request.json['Team Name'], request.json['Email'], request.json['First Name'], request.json['Last Name'], 1, request.json['Position'])
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'].lower(), userDetails[2][0], request.json['email'], userDetails[0][0], userDetails[1][0], 1, numberInQueue[0][0]+1)
 
-            print('test2')
             cursor.execute(entryQuery, entryData)
-            print('test3')
             db.commit()
-            print('test4')
 
             # Close db connection
             closeConnection(db, cursor)
