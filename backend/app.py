@@ -4,6 +4,7 @@ from flask import Flask, request, jsonify
 import config, uuid, mysql.connector, hashlib
 from mysql.connector import errorcode
 from functools import wraps
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -103,8 +104,9 @@ def testUserInputString(db, cursor, string, key, length):
         return False
 
 def loginUser(cursor, email, password):
-    cursor.execute("SELECT COUNT(*) from `Users` WHERE `email` = %s AND `password` = %s", (email, password_hash(password)))
+    cursor.execute("SELECT COUNT(*) from `Users` WHERE `email` = %s AND `password` = %s", (email, password_hash(email, password)))
     if cursor.fetchall()[0][0] == 1:
+
         return True
     else:
         return False
@@ -150,7 +152,6 @@ def registerNewUser(db, cursor):
         closeConnection(db, cursor)
 
         return "User Created", 200
-
 
 
 @app.route('/getQueueNames', methods=['GET'])
@@ -309,8 +310,6 @@ def checkQueue(db, cursor):
         return 'an error occured', 500
     
 
-
-
 @app.route('/enterQueue', methods=['POST'])
 @getStarted
 def enterQueue(db, cursor):
@@ -334,17 +333,27 @@ def enterQueue(db, cursor):
             UUID = str(uuid.uuid4().hex)
             while checkUUID(cursor, ticketUUID=UUID):
                 UUID = str(uuid.uuid4().hex)
+
+            print('here')
+            now = datetime.now()
+            print(now.strftime("%d-%m-%Y %H:%M:%S"))
+            print(userDetails[0][2])
             
-            entryQuery = ("INSERT INTO Queue (`UUID`, `Ticket`, `Description`, `Componant`, `Team Name`, `Email`, `First Name`, `Last Name`, `Active`, `Position`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
-            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'].lower(), userDetails[2][0], request.json['email'], userDetails[0][0], userDetails[1][0], 1, numberInQueue[0][0]+1)
+            entryQuery = ("INSERT INTO reportisan (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], userDetails[0][2], now.strftime("%Y-%m-%d %H:%M:%S"), numberInQueue[0][0]+1)
+
+            print(entryData)
+            print('here')
 
             cursor.execute(entryQuery, entryData)
             db.commit()
 
+            print('here at last')
+
             # Close db connection
             closeConnection(db, cursor)
 
-            return "Successfully intered in queue, your posiiton is " + request.json['Position'], 200
+            return "Successfully in queue. your posiiton is " + str(numberInQueue[0][0]+1), 200
         except:
             closeConnection(db, cursor)
             print("something went wrong")
@@ -355,6 +364,30 @@ def enterQueue(db, cursor):
     else:
         closeConnection(db, cursor)
         return 'an error occured', 500
+
+
+@app.route('/exitQueue', methods=['DELETE'])
+@getStarted
+def exitQueue(db, cursor):
+    if db:
+
+        if loginUser(cursor, request.json['email'], request.json['password']) == False:
+            closeConnection(db, cursor)
+            return "Login Failed", 400
+
+        cursor.execute("SELECT * FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s AND `email` = %s", (request.json['ticket'], request.json['email']))
+        print(cursor.fetchall())
+
+        cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+        db.commit()
+
+        cursor.execute("SELECT * FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+        print(cursor.fetchall())
+
+        closeConnection(db, cursor)
+        return "Deletion successful", 200
+            
+
 
 
 if __name__ == '__main__':
