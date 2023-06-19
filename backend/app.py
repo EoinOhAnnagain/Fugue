@@ -385,7 +385,7 @@ def exitQueue(db, cursor):
         print(cursor.fetchall())
 
         closeConnection(db, cursor)
-        return "Deletion successful", 200
+        return "Queue exited", 200
             
 
 
