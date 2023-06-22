@@ -339,21 +339,24 @@ def enterQueue(db, cursor):
             while checkUUID(cursor, ticketUUID=UUID):
                 UUID = str(uuid.uuid4().hex)
 
-            print('here')
             now = datetime.now()
             print(now.strftime("%d-%m-%Y %H:%M:%S"))
             print(userDetails[0][2])
             
-            entryQuery = ("INSERT INTO reportisan (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
+            entryQuery = ("INSERT INTO " + request.json['componant'].lower() + " (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
             entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], userDetails[0][2], now.strftime("%Y-%m-%d %H:%M:%S"), numberInQueue[0][0]+1)
 
-            print(entryData)
-            print('here')
-
             cursor.execute(entryQuery, entryData)
+
+            # entryQuery = ("INSERT INTO reportisan (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
+        
+
+
             db.commit()
 
-            print('here at last')
+
+
+            
 
             # Close db connection
             closeConnection(db, cursor)
