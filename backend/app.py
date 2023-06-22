@@ -150,8 +150,11 @@ def registerNewUser(db, cursor):
         db.commit()
 
         closeConnection(db, cursor)
-
         return "User Created", 200
+
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
 
 
 @app.route('/getQueueNames', methods=['GET'])
@@ -170,9 +173,9 @@ def getQueues(db, cursor):
 
         # Return JSON and status code
         return json_dump, 200
+    
     else:
         closeConnection(db, cursor)
-         
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
@@ -231,10 +234,8 @@ def checkFullQueue(db, cursor):
         return json_dump, 200
 
     else:
-
         closeConnection(db, cursor)
-         
-        return "an error occured", 404
+        return jsonify({'Error': "Database Connection Error"}), 502
 
 
 @app.route('/checkQueue', methods=['GET'])
@@ -307,7 +308,6 @@ def checkQueue(db, cursor):
 
         except:
             closeConnection(db, cursor)
-            print("something went wrong")
             return "something went wrong", 520
 
     else:
@@ -368,7 +368,7 @@ def enterQueue(db, cursor):
 
     else:
         closeConnection(db, cursor)
-        return 'an error occured', 500
+        return jsonify({'Error': "Database Connection Error"}), 502
 
 
 @app.route('/exitQueue', methods=['DELETE'])
@@ -376,21 +376,32 @@ def enterQueue(db, cursor):
 def exitQueue(db, cursor):
     if db:
 
-        if loginUser(cursor, request.json['email'], request.json['password']) == False:
+        try:
+
+            if loginUser(cursor, request.json['email'], request.json['password']) == False:
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            cursor.execute("SELECT * FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s AND `email` = %s", (request.json['ticket'], request.json['email']))
+            print(cursor.fetchall())
+
+            cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+            db.commit()
+
+            cursor.execute("SELECT * FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+            print(cursor.fetchall())
+
             closeConnection(db, cursor)
-            return "Login Failed", 400
+            return "Queue exited", 200
 
-        cursor.execute("SELECT * FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s AND `email` = %s", (request.json['ticket'], request.json['email']))
-        print(cursor.fetchall())
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
 
-        cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
-        db.commit()
-
-        cursor.execute("SELECT * FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
-        print(cursor.fetchall())
-
+    else:
         closeConnection(db, cursor)
-        return "Queue exited", 200
+        return jsonify({'Error': "Database Connection Error"}), 502
+
             
 
 
