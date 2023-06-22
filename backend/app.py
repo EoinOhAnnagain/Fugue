@@ -63,9 +63,9 @@ def tiny_to_bool(x):
 
 def checkUUID(cursor, employeeUUID=False, ticketUUID=False):
     if employeeUUID:
-        cursor.execute("SELECT COUNT(*) from `Users` WHERE `UUID` = %s", (employeeUUID,))
+        cursor.execute("SELECT COUNT(*) from Users WHERE `UUID` = %s", (employeeUUID,))
     elif ticketUUID:
-        cursor.execute("SELECT COUNT(*) from `masterQueue` WHERE `UUID` = %s", (ticketUUID,))
+        cursor.execute("SELECT COUNT(*) from masterQueue WHERE `UUID` = %s", (ticketUUID,))
 
     if cursor.fetchall()[0][0] == 1:
         return True
@@ -342,22 +342,29 @@ def enterQueue(db, cursor):
             now = datetime.now()
             print(now.strftime("%d-%m-%Y %H:%M:%S"))
             print(userDetails[0][2])
+
+
+            cursor.execute("SELECT team FROM Users WHERE `email` = %s", (request.json['email'],))
+            teamName = cursor.fetchall()[0][0]
+
+            currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
+
             
             entryQuery = ("INSERT INTO " + request.json['componant'].lower() + " (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
-            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], userDetails[0][2], now.strftime("%Y-%m-%d %H:%M:%S"), numberInQueue[0][0]+1)
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], userDetails[0][2], currentDT, numberInQueue[0][0]+1)
 
             cursor.execute(entryQuery, entryData)
 
-            # entryQuery = ("INSERT INTO reportisan (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
+
+            entryQuery = ("INSERT INTO masterQueue (`UUID`, `ticket`, `description`, `componant`, `email`, `teamName`, `active`, `opened`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'], request.json['email'], teamName, bool_to_tiny(True), currentDT)
         
+            cursor.execute(entryQuery, entryData)
 
 
             db.commit()
-
-
-
             
-
+            
             # Close db connection
             closeConnection(db, cursor)
 
@@ -368,7 +375,6 @@ def enterQueue(db, cursor):
             return "something went wrong", 520
 
         
-
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
