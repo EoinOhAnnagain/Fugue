@@ -33,7 +33,7 @@ def create_db_connection():
             return False
 
 def getQueueNames(cursor):
-    cursor.execute("SELECT * FROM `Queues`")
+    cursor.execute("SHOW TABLES;")
     queues = cursor.fetchall()
     returnable = []
     for q in queues:
@@ -243,7 +243,7 @@ def checkQueue(db, cursor):
     if db:
         try:
             
-            queueName = request.json['queueName'].lower()
+            queueName = request.json['componant'].lower()
 
             
             if request.json['simple'].lower() == 'false':
@@ -266,7 +266,7 @@ def checkQueue(db, cursor):
 
                 return queueName.lower() + " is empty", 200
     
-            returnable = []
+            entriesArray = []
             entry = {}
             
             if request.json['simple'].lower() == 'false': 
@@ -277,22 +277,27 @@ def checkQueue(db, cursor):
                 for e in entries:
                     for i in range(0, len(e)):
                         entry[names[i][0]] = e[i]
-                    returnable.append(entry.copy())
-                returnable.reverse()
+                    entriesArray.append(entry.copy())
 
+                returnable = sorted(entriesArray, key=lambda x: x['position'])
+
+                returnable[0]['position'] = "Releasing"
+                
                 json_dump = jsonify(returnable)
 
             else:
 
                 for e in entries:
                     entry = {
-                        "ticket": e[0],
-                        "email": e[1],
+                        "ticket": e[1],
+                        "email": e[0],
                         "position": e[2],
                     }
                     
-                    returnable.append(entry.copy())
-                returnable.reverse()
+                    entriesArray.append(entry.copy())
+                returnable = sorted(entriesArray, key=lambda x: x['position'])
+
+                returnable[0]['position'] = "Releasing"
 
                 json_dump = jsonify(returnable)
 
