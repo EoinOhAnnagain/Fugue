@@ -1,10 +1,11 @@
 from itertools import count
+from operator import truediv
 from textwrap import wrap
 from flask import Flask, request, jsonify
 import config, uuid, mysql.connector, hashlib
 from mysql.connector import errorcode
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
@@ -61,11 +62,13 @@ def tiny_to_bool(x):
     else:
         return True
 
-def checkUUID(cursor, employeeUUID=False, ticketUUID=False):
+def checkUUID(cursor, employeeUUID=False, ticketUUID=False, freezeUUID=False):
     if employeeUUID:
         cursor.execute("SELECT COUNT(*) from Users WHERE `UUID` = %s", (employeeUUID,))
     elif ticketUUID:
         cursor.execute("SELECT COUNT(*) from masterQueue WHERE `UUID` = %s", (ticketUUID,))
+    elif freezeUUID:
+        cursor.execute("SELECT COUNT(*) from CodeFreezes WHERE `UUID` = %s", (employeeUUID,))
 
     if cursor.fetchall()[0][0] == 1:
         return True
@@ -103,13 +106,23 @@ def testUserInputString(db, cursor, string, key, length):
     else:
         return False
 
-def loginUser(cursor, email, password):
-    cursor.execute("SELECT COUNT(*) from `Users` WHERE `email` = %s AND `password` = %s", (email, password_hash(email, password)))
-    if cursor.fetchall()[0][0] == 1:
+def loginUser(cursor, email, password, admin=False):
+    cursor.execute("SELECT isAdmin from `Users` WHERE `email` = %s AND `password` = %s", (email, password_hash(email, password)))
+    result = cursor.fetchall()
 
+    if len(result) == 0:
+        print("no user found")
+        return False
+    elif admin and result[0][0] == 1:
+        print('Admin user')
+        return True
+    elif admin == False and result[0][0] == 0:
+        print('User')
         return True
     else:
+        print('Database Error')
         return False
+        
 
 
 @app.route('/')
@@ -410,6 +423,129 @@ def exitQueue(db, cursor):
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
+
+
+
+@app.route('/startCodeFreeze', methods=['POST'])
+@getStarted
+def startCodeFreeze(db, cursor):
+
+    if db:
+        try:
+            if loginUser(cursor, request.json['email'], request.json['password'], True) == False:
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            UUID = str(uuid.uuid4().hex)
+            while checkUUID(cursor, ticketUUID=UUID):
+                UUID = str(uuid.uuid4().hex)
+
+            inEffect = True if request.json['startIn'] == 0 else False
+
+            startOfCodeFreeze = (datetime.now() + timedelta(days=request.json['startIn'])).strftime("%Y-%m-%d")
+            endOfCodeFreeze = (datetime.now() + timedelta(days=request.json['startIn']) + timedelta(days=request.json['duration'])).strftime("%Y-%m-%d")
+
+            entryQuery = ("INSERT INTO codeFreezes (`UUID`, `begins`, `duration`, `ends`, `inEffect`) VALUES (%s, %s, %s, %s, %s)")
+            entryData = (UUID, startOfCodeFreeze, request.json['duration'], endOfCodeFreeze, inEffect)
+
+            cursor.execute(entryQuery, entryData)
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "Done", 200
+
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+@app.route('/endActiveCodeFreeze', methods=['DELETE'])
+@getStarted
+def endActiveCodeFreeze(db, cursor):
+
+    if db:
+        try:
+            if loginUser(cursor, request.json['email'], request.json['password'], True) == False:
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            cursor.execute("SET SQL_SAFE_UPDATES = 0")
+            db.commit()
+            cursor.execute("UPDATE MQDB.CodeFreezes SET `inEffect` = 0 WHERE (`inEffect` = 1)")
+            db.commit()
+            cursor.execute("SET SQL_SAFE_UPDATES = 1;")
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "Done", 200
+
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+@app.route('/checkFreezes', methods=['GET'])
+@getStarted
+def checkFreezes(db, cursor):
+    if db:
+        try:
+            # if loginUser(cursor, request.json['email'], request.json['password']) == False:
+            #     closeConnection(db, cursor)
+            #     return "Login Failed", 400
+
+            cursor.execute("DESCRIBE `CodeFreezes`")
+            tableNames = cursor.fetchall()
+
+            cursor.execute("SELECT * FROM `CodeFreezes`")
+            freezes = cursor.fetchall()
+
+            returnable = []
+            entry = {}
+            for f in freezes:
+                for i in range(0, len(tableNames)):
+                    entry[tableNames[i][0]] = f[i]
+                returnable.append(entry.copy())
+
+            json_dump = jsonify(returnable)
+
+            closeConnection(db, cursor)
+            return json_dump, 200
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+
+
+
+
+
+
+# @app.route('/', methods=[''])
+# @getStarted
+# def checkFreezes(db, cursor):
+#     if db:
+#         try:
+#             if loginUser(cursor, request.json['email'], request.json['password']) == False:
+#                 closeConnection(db, cursor)
+#                 return "Login Failed", 400
+#             closeConnection(db, cursor)
+#             return "Done", 200
+#         except:
+#             closeConnection(db, cursor)
+#             return "something went wrong", 520
+#     else:
+#         closeConnection(db, cursor)
+#         return jsonify({'Error': "Database Connection Error"}), 502
 
             
 
