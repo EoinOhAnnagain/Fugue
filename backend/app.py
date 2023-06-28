@@ -10,6 +10,9 @@ from datetime import datetime, timedelta
 app = Flask(__name__)
 
 
+# Methods
+
+""" Wrapped method to setup endpoint """
 def getStarted(f):
     @wraps(f)
     def getSetUp(*args, **kwargs):
@@ -19,6 +22,7 @@ def getStarted(f):
 
         return f(db, cursor, *args, **kwargs)
     return getSetUp
+
 
 """ Method to create connection with the database. Returns the database connection if successful. Returns False if there is an error and prints the error """
 def create_db_connection():
@@ -33,6 +37,8 @@ def create_db_connection():
         else:
             return False
 
+
+""" Method to get the names of all componants users can queue in. Returns an array of all queue names as strings. Takes in the cursor """
 def getQueueNames(cursor):
     cursor.execute("SHOW TABLES;")
     queues = cursor.fetchall()
@@ -41,12 +47,14 @@ def getQueueNames(cursor):
         returnable.append(q[0])
     return returnable
 
+
 """ Method to has password provided by user. Uses username and salts from confid file. Takes in a username and password """
 def password_hash(user, password):
     password = hashlib.md5((password+user).encode())
     for salt in config.salts:
         password = hashlib.md5((password.hexdigest()+salt).encode())
     return password.hexdigest()
+
 
 """ Method to convert a bool to a tinyint for storage in mysql database. True becomes 1 and Flase becomes 0. Expects a boolean """
 def bool_to_tiny(x):
@@ -55,6 +63,7 @@ def bool_to_tiny(x):
     else:
         return "0"
 
+
 """ Method to convert a tinyint to a bool for returning to the user. 0 becomes False. Anything else becomes True. Expects an int """
 def tiny_to_bool(x):
     if x == 0:
@@ -62,6 +71,8 @@ def tiny_to_bool(x):
     else:
         return True
 
+
+""" Method to check if a generated UUID is already present in the database. Returns a boolean. Takes in the cursor and a UUID in one of the optional arguements """
 def checkUUID(cursor, employeeUUID=False, ticketUUID=False, freezeUUID=False):
     if employeeUUID:
         cursor.execute("SELECT COUNT(*) from Users WHERE `UUID` = %s", (employeeUUID,))
@@ -75,7 +86,9 @@ def checkUUID(cursor, employeeUUID=False, ticketUUID=False, freezeUUID=False):
     else:
         return False
 
-def checkUser(cursor, email, hashedPassword=False):
+
+""" Method to check if a user exists in the database """
+def checkForUser(cursor, email, hashedPassword=False):
     if hashedPassword:
         print('HP')
     else:
@@ -86,10 +99,14 @@ def checkUser(cursor, email, hashedPassword=False):
     else:
         return False
 
+
+""" Method to close the database connection. Takes in the cursor and the db connection. Return is void """
 def closeConnection(db, cursor):
     cursor.close()
     db.close()
 
+
+""" Method to test the users input string. Ta """
 def testUserInputString(db, cursor, string, key, length):
     if type(string) != str:
         closeConnection(db, cursor)
@@ -106,6 +123,8 @@ def testUserInputString(db, cursor, string, key, length):
     else:
         return False
 
+
+""" Method to log a user in. Returns a boolean. Takes in the cursor, the users email and password, and an optional boolean indicating if the user needs admin privileges """
 def loginUser(cursor, email, password, admin=False):
     cursor.execute("SELECT isAdmin from `Users` WHERE `email` = %s AND `password` = %s", (email, password_hash(email, password)))
     result = cursor.fetchall()
@@ -125,10 +144,15 @@ def loginUser(cursor, email, password, admin=False):
         
 
 
+# Endpoints
+
 @app.route('/')
 def index():
 
     return 'Hello :) ' + password_hash('fdsfds', 'test') + ' :P'
+
+
+# User management endpoints
 
 @app.route('/register', methods=['POST'])
 @getStarted
@@ -140,8 +164,8 @@ def registerNewUser(db, cursor):
         while checkUUID(cursor, employeeUUID=UUID):
             UUID = str(uuid.uuid4().hex)
 
-        if checkUser(cursor, request.json['email']):
-            return "email is already in user", 400
+        if checkForUser(cursor, request.json['email']):
+            return "email is already in use", 400
         
         if testUserInputString(db, cursor, request.json['firstName'].lower(), 'firstName', 45) != False:
             return testUserInputString(db, cursor, request.json['firstName'].lower(), 'firstName', 45), 400
@@ -170,6 +194,8 @@ def registerNewUser(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
+# Queue endpoints
+
 @app.route('/getQueueNames', methods=['GET'])
 @getStarted
 def getQueues(db, cursor):
@@ -187,65 +213,6 @@ def getQueues(db, cursor):
         # Return JSON and status code
         return json_dump, 200
     
-    else:
-        closeConnection(db, cursor)
-        return jsonify({'Error': "Database Connection Error"}), 502
-
-
-@app.route('/checkMasterQueue', methods=['GET'])
-@getStarted
-def checkFullQueue(db, cursor):
-    if db:
-
-        if request.json['simple'].lower() == 'true':
-            cursor.execute("SELECT ticket, email, active, componant FROM `masterQueue`")
-        elif request.json['simple'].lower() != 'false':
-
-            closeConnection(db, cursor)
-
-            return "True or false? Your Spelling Sucks", 403
-        else:
-            cursor.execute("SELECT * FROM `masterQueue`")
-
-        entries = cursor.fetchall()
-
-
-        returnable = []
-        entry = {}
-        
-        if request.json['simple'].lower() == 'false': 
-
-            cursor.execute("DESCRIBE `masterQueue`")
-            names = cursor.fetchall()
-            
-            for e in entries:
-                for i in range(0, len(e)):
-                    entry[names[i][0]] = e[i]
-                returnable.append(entry.copy())
-            returnable.reverse()
-
-            json_dump = jsonify(returnable)
-
-        else:
-
-            for e in entries:
-                entry = {
-                    "ticket": e[0],
-                    "email": e[1],
-                    "active": tiny_to_bool(e[2]),
-                    "componant": e[3]
-                }
-
-                returnable.append(entry.copy())
-            returnable.reverse()
-
-            json_dump = jsonify(returnable)
-
-        closeConnection(db, cursor)
-         
-
-        return json_dump, 200
-
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
@@ -425,6 +392,66 @@ def exitQueue(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
+@app.route('/checkMasterQueue', methods=['GET'])
+@getStarted
+def checkFullQueue(db, cursor):
+    if db:
+
+        if request.json['simple'].lower() == 'true':
+            cursor.execute("SELECT ticket, email, active, componant FROM `masterQueue`")
+        elif request.json['simple'].lower() != 'false':
+
+            closeConnection(db, cursor)
+
+            return "True or false? Your Spelling Sucks", 403
+        else:
+            cursor.execute("SELECT * FROM `masterQueue`")
+
+        entries = cursor.fetchall()
+
+
+        returnable = []
+        entry = {}
+        
+        if request.json['simple'].lower() == 'false': 
+
+            cursor.execute("DESCRIBE `masterQueue`")
+            names = cursor.fetchall()
+            
+            for e in entries:
+                for i in range(0, len(e)):
+                    entry[names[i][0]] = e[i]
+                returnable.append(entry.copy())
+            returnable.reverse()
+
+            json_dump = jsonify(returnable)
+
+        else:
+
+            for e in entries:
+                entry = {
+                    "ticket": e[0],
+                    "email": e[1],
+                    "active": tiny_to_bool(e[2]),
+                    "componant": e[3]
+                }
+
+                returnable.append(entry.copy())
+            returnable.reverse()
+
+            json_dump = jsonify(returnable)
+
+        closeConnection(db, cursor)
+         
+
+        return json_dump, 200
+
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+# Code freeze related endpoints
 
 @app.route('/startCodeFreeze', methods=['POST'])
 @getStarted
@@ -528,7 +555,7 @@ def checkFreezes(db, cursor):
 
 
 
-
+# Endpoint skeleton
 
 # @app.route('/', methods=[''])
 # @getStarted
