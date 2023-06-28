@@ -445,7 +445,7 @@ def startCodeFreeze(db, cursor):
             startOfCodeFreeze = (datetime.now() + timedelta(days=request.json['startIn'])).strftime("%Y-%m-%d")
             endOfCodeFreeze = (datetime.now() + timedelta(days=request.json['startIn']) + timedelta(days=request.json['duration'])).strftime("%Y-%m-%d")
 
-            entryQuery = ("INSERT INTO codeFreezes (`UUID`, `startDate`, `duration`, `endDate`, `inEffect`) VALUES (%s, %s, %s, %s, %s)")
+            entryQuery = ("INSERT INTO codeFreezes (`UUID`, `begins`, `duration`, `ends`, `inEffect`) VALUES (%s, %s, %s, %s, %s)")
             entryData = (UUID, startOfCodeFreeze, request.json['duration'], endOfCodeFreeze, inEffect)
 
             cursor.execute(entryQuery, entryData)
@@ -489,6 +489,63 @@ def endActiveCodeFreeze(db, cursor):
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
 
+
+@app.route('/checkFreezes', methods=['GET'])
+@getStarted
+def checkFreezes(db, cursor):
+    if db:
+        try:
+            # if loginUser(cursor, request.json['email'], request.json['password']) == False:
+            #     closeConnection(db, cursor)
+            #     return "Login Failed", 400
+
+            cursor.execute("DESCRIBE `CodeFreezes`")
+            tableNames = cursor.fetchall()
+
+            cursor.execute("SELECT * FROM `CodeFreezes`")
+            freezes = cursor.fetchall()
+
+            returnable = []
+            entry = {}
+            for f in freezes:
+                for i in range(0, len(tableNames)):
+                    entry[tableNames[i][0]] = f[i]
+                returnable.append(entry.copy())
+
+            json_dump = jsonify(returnable)
+
+            closeConnection(db, cursor)
+            return json_dump, 200
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+
+
+
+
+
+
+# @app.route('/', methods=[''])
+# @getStarted
+# def checkFreezes(db, cursor):
+#     if db:
+#         try:
+#             if loginUser(cursor, request.json['email'], request.json['password']) == False:
+#                 closeConnection(db, cursor)
+#                 return "Login Failed", 400
+#             closeConnection(db, cursor)
+#             return "Done", 200
+#         except:
+#             closeConnection(db, cursor)
+#             return "something went wrong", 520
+#     else:
+#         closeConnection(db, cursor)
+#         return jsonify({'Error': "Database Connection Error"}), 502
 
             
 
