@@ -139,13 +139,30 @@ def loginUser(cursor, email, password, admin=False):
         return False
         
 
+def checkForCodeFreeze(cursor):
+    
+    cursor.execute("SELECT COUNT(*) FROM `CodeFreezes` WHERE begins <= CURDATE() AND ends >= CURDATE() AND inEffect = true;")
+    return False if (cursor.fetchall())[0][0] == 0 else True 
+
 
 # Endpoints
 
-@app.route('/')
-def index():
+@app.route('/', methods=['GET'])
+@getStarted
+def index(db, cursor):
 
-    return 'Hello :) ' + password_hash('fdsfds', 'test') + ' :P'
+    if checkForCodeFreeze(cursor):
+        print("HERE")
+        closeConnection(db, cursor)
+        return "RED LIGHT", 200
+    else:
+        print("THERE")
+        closeConnection(db, cursor)
+        return "GREEN LIGHT", 400
+
+    
+
+
 
 
 # User management endpoints
