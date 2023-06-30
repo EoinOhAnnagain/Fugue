@@ -1,6 +1,3 @@
-from itertools import count
-from operator import truediv
-from textwrap import wrap
 from flask import Flask, request, jsonify
 import config, uuid, mysql.connector, hashlib
 from mysql.connector import errorcode
@@ -11,6 +8,9 @@ app = Flask(__name__)
 
 
 # Methods
+
+def p(p):
+    print(p)
 
 """ Wrapped method to setup endpoint """
 def getStarted(f):
@@ -130,16 +130,12 @@ def loginUser(cursor, email, password, admin=False):
     result = cursor.fetchall()
 
     if len(result) == 0:
-        print("no user found")
         return False
     elif admin and result[0][0] == 1:
-        print('Admin user')
         return True
-    elif admin == False and result[0][0] == 0:
-        print('User')
+    elif not admin and result[0][0] == 0:
         return True
     else:
-        print('Database Error')
         return False
         
 
@@ -194,7 +190,7 @@ def registerNewUser(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
-# Queue endpoints
+# General Queue endpoints
 
 @app.route('/getQueueNames', methods=['GET'])
 @getStarted
@@ -204,8 +200,6 @@ def getQueues(db, cursor):
 
         # Get Employee data as a list of dictionaries and turn it into a JSON object
         json_dump = jsonify(getQueueNames(cursor))
-
-        print(json_dump)
 
         # Close db connection
         closeConnection(db, cursor)
@@ -225,16 +219,9 @@ def checkQueue(db, cursor):
         try:
             
             queueName = request.json['componant'].lower()
-
             
-            if request.json['simple'].lower() == 'false':
+            if not request.json['simple']:
                 cursor.execute("SELECT * FROM `" + queueName + "`")
-            elif request.json['simple'].lower() != 'true':
-
-                closeConnection(db, cursor)
-                 
-
-                return "True or false? Your Spelling Sucks", 403
             else:
                 cursor.execute("SELECT email, ticket, position FROM `" + queueName + "`")
             
@@ -250,7 +237,7 @@ def checkQueue(db, cursor):
             entriesArray = []
             entry = {}
             
-            if request.json['simple'].lower() == 'false': 
+            if not request.json['simple']: 
 
                 cursor.execute("DESCRIBE `" + queueName + "`")
                 names = cursor.fetchall()
@@ -300,12 +287,12 @@ def checkQueue(db, cursor):
 def enterQueue(db, cursor):
     if db:
         try:
-            '''IS EVERYTHING CHECKED HERE?????'''
-            if loginUser(cursor, request.json['email'], request.json['password']) == False:
+            
+            if not loginUser(cursor, request.json['email'], request.json['password']):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT firstName, lastName, team FROM `Users`")
+            cursor.execute("SELECT team FROM `Users`")
             userDetails = cursor.fetchall()
 
             if request.json['componant'].lower() not in getQueueNames(cursor):
@@ -320,41 +307,28 @@ def enterQueue(db, cursor):
                 UUID = str(uuid.uuid4().hex)
 
             now = datetime.now()
-            print(now.strftime("%d-%m-%Y %H:%M:%S"))
-            print(userDetails[0][2])
-
+            currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
 
             cursor.execute("SELECT team FROM Users WHERE `email` = %s", (request.json['email'],))
             teamName = cursor.fetchall()[0][0]
 
-            currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
-
-            
-            entryQuery = ("INSERT INTO " + request.json['componant'].lower() + " (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
-            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], userDetails[0][2], currentDT, numberInQueue[0][0]+1)
+            entryQuery = ("INSERT INTO `" + request.json['componant'].lower() + "` (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], userDetails[0][0], currentDT, numberInQueue[0][0]+1)
 
             cursor.execute(entryQuery, entryData)
-
 
             entryQuery = ("INSERT INTO masterQueue (`UUID`, `ticket`, `description`, `componant`, `email`, `teamName`, `active`, `opened`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
             entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'], request.json['email'], teamName, bool_to_tiny(True), currentDT)
-        
+
             cursor.execute(entryQuery, entryData)
-
-
             db.commit()
             
-            
-            # Close db connection
             closeConnection(db, cursor)
 
             return "Successfully in queue. your posiiton is " + str(numberInQueue[0][0]+1), 200
         except:
             closeConnection(db, cursor)
-            print("something went wrong")
             return "something went wrong", 520
-
-        
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
@@ -371,15 +345,17 @@ def exitQueue(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT * FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s AND `email` = %s", (request.json['ticket'], request.json['email']))
-            print(cursor.fetchall())
-
-            cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+            cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'].upper(),))
+                
+            now = datetime.now()
+            currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
+                
+            cursor.execute("SET SQL_SAFE_UPDATES = 0;")
             db.commit()
-
-            cursor.execute("SELECT * FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
-            print(cursor.fetchall())
-
+            cursor.execute("UPDATE `masterQueue` SET `active` = 0, `closed` = %s WHERE (`ticket` = %s AND `componant` = %s);", (currentDT, request.json['ticket'].upper(), request.json['componant'].lower()))
+            db.commit()
+            cursor.execute("SET SQL_SAFE_UPDATES = 1;")
+            db.commit()
             closeConnection(db, cursor)
             return "Queue exited", 200
 
@@ -392,63 +368,72 @@ def exitQueue(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
+# Master queue endpoints
+
 @app.route('/checkMasterQueue', methods=['GET'])
 @getStarted
-def checkFullQueue(db, cursor):
+def checkMasterQueue(db, cursor):
     if db:
+        try:
 
-        if request.json['simple'].lower() == 'true':
-            cursor.execute("SELECT ticket, email, active, componant FROM `masterQueue`")
-        elif request.json['simple'].lower() != 'false':
+            query = "SELECT "
+            query += "email, ticket, componant, active, opened, closed FROM `masterQueue`" if request.json['simple'] else  "* FROM `masterQueue`"
+    
+            if request.json['daysBack']:
+                if isinstance(request.json['daysBack'], int):
+                    # Yes I know...SQL Injection and shit....ugh
+                    query += " WHERE opened >= ( CURDATE() - INTERVAL " + str(request.json['daysBack']) + " DAY )"
+                else:
+                    return "Type error. daysBack needs to be an int", 400
+
+            cursor.execute(query)
+            entries = cursor.fetchall()
+
+            if len(entries) == 0:
+                closeConnection(db, cursor)
+                return "Master queue is empty", 200
+            
+            entriesArray = []
+            entry = {}
+            
+            if request.json['simple']: 
+
+                for e in entries:
+                    entry = {
+                        "ticket": e[1],
+                        "email": e[0],
+                        "componant": e[2],
+                        "active": tiny_to_bool(e[3]),
+                        "opened": e[4],
+                    }
+                    if not e[3]:
+                        entry['closed'] =  e[5]
+                    entriesArray.append(entry.copy())
+
+            else:
+                cursor.execute("DESCRIBE `masterQueue`")
+                names = cursor.fetchall()
+                
+                for e in entries:
+                    for i in range(0, len(e)):
+                        entry[names[i][0]] = e[i]
+                    entriesArray.append(entry.copy())
+
+
+            returnable = sorted(entriesArray, key=lambda x: x['componant']) if request.json['byComponant'] else sorted(entriesArray, key=lambda x: x['opened'])
+            json_dump = jsonify(returnable)
 
             closeConnection(db, cursor)
+            return json_dump, 200
 
-            return "True or false? Your Spelling Sucks", 403
-        else:
-            cursor.execute("SELECT * FROM `masterQueue`")
-
-        entries = cursor.fetchall()
-
-
-        returnable = []
-        entry = {}
-        
-        if request.json['simple'].lower() == 'false': 
-
-            cursor.execute("DESCRIBE `masterQueue`")
-            names = cursor.fetchall()
-            
-            for e in entries:
-                for i in range(0, len(e)):
-                    entry[names[i][0]] = e[i]
-                returnable.append(entry.copy())
-            returnable.reverse()
-
-            json_dump = jsonify(returnable)
-
-        else:
-
-            for e in entries:
-                entry = {
-                    "ticket": e[0],
-                    "email": e[1],
-                    "active": tiny_to_bool(e[2]),
-                    "componant": e[3]
-                }
-
-                returnable.append(entry.copy())
-            returnable.reverse()
-
-            json_dump = jsonify(returnable)
-
-        closeConnection(db, cursor)
-         
-
-        return json_dump, 200
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
 
     else:
         closeConnection(db, cursor)
-        return jsonify({'Error': "Database Connection Error"}), 502
+        return 'an error occured', 500
+    
 
 
 # Code freeze related endpoints
@@ -459,7 +444,7 @@ def startCodeFreeze(db, cursor):
 
     if db:
         try:
-            if loginUser(cursor, request.json['email'], request.json['password'], True) == False:
+            if not loginUser(cursor, request.json['email'], request.json['password'], True):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
@@ -495,7 +480,7 @@ def endActiveCodeFreeze(db, cursor):
 
     if db:
         try:
-            if loginUser(cursor, request.json['email'], request.json['password'], True) == False:
+            if not loginUser(cursor, request.json['email'], request.json['password'], True):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
@@ -522,9 +507,6 @@ def endActiveCodeFreeze(db, cursor):
 def checkFreezes(db, cursor):
     if db:
         try:
-            # if loginUser(cursor, request.json['email'], request.json['password']) == False:
-            #     closeConnection(db, cursor)
-            #     return "Login Failed", 400
 
             cursor.execute("DESCRIBE `CodeFreezes`")
             tableNames = cursor.fetchall()
@@ -551,6 +533,26 @@ def checkFreezes(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
+@app.route('/endCodeFreeze', methods=['DELETE'])
+@getStarted
+def endFreeze(db, cursor):
+    if db:
+        try:
+            if not loginUser(cursor, request.json['email'], request.json['password'], True):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            cursor.execute("DELETE FROM `CodeFreezes` WHERE (`UUID` = %s)", (request.json['codeFreezeUUID'],))
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "Done", 200
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
 
 
 
@@ -562,7 +564,7 @@ def checkFreezes(db, cursor):
 # def checkFreezes(db, cursor):
 #     if db:
 #         try:
-#             if loginUser(cursor, request.json['email'], request.json['password']) == False:
+#             if not loginUser(cursor, request.json['email'], request.json['password']):
 #                 closeConnection(db, cursor)
 #                 return "Login Failed", 400
 #             closeConnection(db, cursor)
@@ -573,9 +575,6 @@ def checkFreezes(db, cursor):
 #     else:
 #         closeConnection(db, cursor)
 #         return jsonify({'Error': "Database Connection Error"}), 502
-
-            
-
 
 
 if __name__ == '__main__':
