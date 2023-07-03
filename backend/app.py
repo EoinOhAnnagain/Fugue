@@ -1,3 +1,4 @@
+import queue
 from flask import Flask, request, jsonify
 import config, uuid, mysql.connector, hashlib
 from mysql.connector import errorcode
@@ -150,20 +151,16 @@ def checkForCodeFreeze(cursor):
 
 # Endpoints
 
-@app.route('/', methods=['GET'])
+@app.route('/', methods=['PUT'])
 @getStarted
 def index(db, cursor):
 
-    if checkForCodeFreeze(cursor):
-        print("HERE")
-        closeConnection(db, cursor)
-        return "RED LIGHT", 200
-    else:
-        print("THERE")
-        closeConnection(db, cursor)
-        return "GREEN LIGHT", 403
+    query = "UPDATE `" + request.json['componant'] + "` SET `description` = %s WHERE (`ticket` = %s AND `email` = %s);"
+    cursor.execute(query, (request.json['description'], request.json['ticket'], request.json['email'],))
+    db.commit()
 
-    
+    closeConnection(db, cursor)
+    return "Success", 200
 
 
 
@@ -274,8 +271,6 @@ def toggleAdmin(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
-
-
 @app.route('/deleteSelf', methods=['DELETE'])
 @getStarted
 def deleteSelf(db, cursor):
@@ -325,8 +320,6 @@ def deleteSelf(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
-
-
 @app.route('/deleteUser', methods=['DELETE'])
 @getStarted
 def deleteUser(db, cursor):
@@ -371,9 +364,6 @@ def deleteUser(db, cursor):
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
-
-
-
 
 
 
@@ -483,6 +473,10 @@ def enterQueue(db, cursor):
             if checkForCodeFreeze(cursor):
                 return "There is a code freeze in effect. New entries cannot be added to the queue until the code freeze ends", 403
 
+            if len(request.json['description']) > 400:
+                closeConnection(db, cursor)
+                return "Description is too long. Please limit it to 400 charracters or less", 403
+
             cursor.execute("SELECT team FROM `Users`")
             userDetails = cursor.fetchall()
 
@@ -520,6 +514,47 @@ def enterQueue(db, cursor):
         except:
             closeConnection(db, cursor)
             return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+@app.route('/updateTicketDescription', methods=['PUT'])
+@getStarted
+def updateTicketDescription(db, cursor):
+    if db:
+        try:
+            if not loginUser(cursor, request.json['email'], request.json['password']):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            print('egfyiewgi')
+
+            if len(request.json['description']) > 400:
+                closeConnection(db, cursor)
+                return "Description is too long. Please limit it to 400 charracters or less", 403
+
+            p("fnrwuoghour")
+
+            query = "SELECT COUNT(*) FROM `" + request.json['componant'] + "` WHERE (`ticket` = %s AND `email` = %s)"
+            print(query)
+            cursor.execute(query, (request.json['ticket'], request.json['email'],))
+            
+            if cursor.fetchall()[0][0] == 0:
+                closeConnection(db, cursor)
+                return "No matching ticket found", 403
+
+            query = "UPDATE `" + request.json['componant'] + "` SET `description` = %s WHERE (`ticket` = %s AND `email` = %s);"
+            cursor.execute(query, (request.json['description'], request.json['ticket'], request.json['email'],))
+            db.commit()
+
+
+
+            closeConnection(db, cursor)
+            return "Done", 200
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 500
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
