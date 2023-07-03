@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 app = Flask(__name__)
 
 
+
 # Methods
 
 def p(p):
@@ -129,11 +130,6 @@ def loginUser(cursor, email, password, admin=False):
     cursor.execute("SELECT isAdmin from `Users` WHERE `email` = %s AND `password` = %s", (email, password_hash(email, password)))
     result = cursor.fetchall()
 
-    print(result)
-    print(len(result))
-    print(admin, " ", result[0][0])
-
-
     if len(result) == 0:
         return False
     elif admin and result[0][0] == 1:
@@ -212,6 +208,174 @@ def registerNewUser(db, cursor):
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
+
+
+@app.route('/toggleAdmin', methods=['PUT'])
+@getStarted
+def toggleAdmin(db, cursor):
+    if db:
+        try:
+
+            cursor.execute("SELECT COUNT(*) FROM Users WHERE isAdmin = 1")
+            adminCount = cursor.fetchall()[0][0]
+            
+            print(adminCount)
+
+            if adminCount == 0:
+                print("0 found")
+                if not loginUser(cursor, request.json['email'], request.json['password']):
+                    print("not log in")
+                    closeConnection(db, cursor)
+                    return "Login Failed", 400
+
+                cursor.execute("UPDATE `Users` SET `isAdmin` = 1 WHERE (`email` = %s)", (request.json['targetEmail'],))
+                db.commit()
+
+                print("woop")
+                closeConnection(db, cursor)
+                print("woop")
+                
+                return "Emergency admin succesfully created", 200
+
+            else:
+
+
+                if not loginUser(cursor, request.json['email'], request.json['password'], True):
+                    closeConnection(db, cursor)
+                    return "Login Failed", 400
+
+                if adminCount == 1 and request.json['email'] == request.json['targetEmail']:
+                    closeConnection(db, cursor)
+                    return "Cannot toggle as you are the only admin. Create another admin first", 403
+
+                cursor.execute("SELECt COUNT(*), isAdmin FROM `Users` WHERE `email` = %s", (request.json['targetEmail'],))
+                userFound = cursor.fetchall()[0]
+
+                if userFound[0] == 0:
+                    closeConnection(db, cursor)
+                    return "Target not found", 403
+
+                if userFound[1] == 1:
+                    cursor.execute("UPDATE `Users` SET `isAdmin` = 0 WHERE (`email` = %s)", (request.json['targetEmail'],))
+                    db.commit()
+                    closeConnection(db, cursor)
+                    return "Target is no longer an Admin", 200
+                else:
+                    cursor.execute("UPDATE `Users` SET `isAdmin` = 1 WHERE (`email` = %s)", (request.json['targetEmail'],))
+                    db.commit()
+                    closeConnection(db, cursor)
+                    return "Target is now an Admin", 200
+
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+
+
+@app.route('/deleteSelf', methods=['DELETE'])
+@getStarted
+def deleteSelf(db, cursor):
+    if db:
+        try:
+
+            if not loginUser(cursor, request.json['email'], request.json['password']):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            cursor.execute("SELECT COUNT(*), isAdmin FROM `Users` WHERE (`email` = %s)", (request.json['email'],))
+            userFound = cursor.fetchall()[0]
+
+            if userFound[0] == 0:
+                closeConnection(db, cursor)
+                return "User not found", 403
+
+            if userFound[1] == 1:
+
+                cursor.execute("SELECT COUNT(*) FROM `Users` WHERE (`isAdmin` = 1)")
+                if cursor.fetchall()[0][0] == 1:
+                    closeConnection(db, cursor)
+                    return "Deleting yourself would leave no Admins. Please create a new admin first", 403
+
+            cursor.execute("SELECT UUID FROM Users WHERE email = %s", (request.json['email'],))
+            userUUID = cursor.fetchall()[0][0]
+            cursor.execute("DELETE FROM `Users` WHERE (`UUID` = %s);", (userUUID,))
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "You are deleted", 200
+
+
+
+                
+
+
+
+
+
+            
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+
+
+@app.route('/deleteUser', methods=['DELETE'])
+@getStarted
+def deleteUser(db, cursor):
+    if db:
+        try:
+
+            if not loginUser(cursor, request.json['email'], request.json['password'], True):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            if request.json['email'] == request.json['targetEmail']:
+                closeConnection(db, cursor)
+                return "This endpoint is not fo deleting oneslef", 403
+
+            cursor.execute("SELECT COUNT(*) FROM `Users` WHERE (`email` = %s)", (request.json['targetEmail'],))
+            userFound = cursor.fetchall()[0]
+
+            if userFound[0] == 0:
+                closeConnection(db, cursor)
+                return "User not found", 403
+
+            cursor.execute("SELECT UUID FROM Users WHERE email = %s", (request.json['targetEmail'],))
+            userUUID = cursor.fetchall()[0][0]
+            cursor.execute("DELETE FROM `Users` WHERE (`UUID` = %s);", (userUUID,))
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "User deleted", 200
+
+
+
+                
+
+
+
+
+
+            
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+
+
+
 
 
 # General Queue endpoints
@@ -393,6 +557,7 @@ def exitQueue(db, cursor):
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
+
 
 
 # Master queue endpoints
