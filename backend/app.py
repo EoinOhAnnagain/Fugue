@@ -129,20 +129,27 @@ def loginUser(cursor, email, password, admin=False):
     cursor.execute("SELECT isAdmin from `Users` WHERE `email` = %s AND `password` = %s", (email, password_hash(email, password)))
     result = cursor.fetchall()
 
+    print(result)
+    print(len(result))
+    print(admin, " ", result[0][0])
+
+
     if len(result) == 0:
         return False
     elif admin and result[0][0] == 1:
         return True
-    elif not admin and result[0][0] == 0:
+    elif not admin and len(result) == 1:
         return True
     else:
+        print("Unexpected")
         return False
         
 
+""" Method to check if there is a general code freeze in effect. Returns True if there is a code freeze. Takes in the cursor """
 def checkForCodeFreeze(cursor):
     
     cursor.execute("SELECT COUNT(*) FROM `CodeFreezes` WHERE begins <= CURDATE() AND ends >= CURDATE() AND inEffect = true;")
-    return False if (cursor.fetchall())[0][0] == 0 else True 
+    return True if (cursor.fetchall())[0][0] != 0 else False 
 
 
 # Endpoints
@@ -158,7 +165,7 @@ def index(db, cursor):
     else:
         print("THERE")
         closeConnection(db, cursor)
-        return "GREEN LIGHT", 400
+        return "GREEN LIGHT", 403
 
     
 
@@ -308,6 +315,9 @@ def enterQueue(db, cursor):
             if not loginUser(cursor, request.json['email'], request.json['password']):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
+
+            if checkForCodeFreeze(cursor):
+                return "There is a code freeze in effect. New entries cannot be added to the queue until the code freeze ends", 403
 
             cursor.execute("SELECT team FROM `Users`")
             userDetails = cursor.fetchall()
