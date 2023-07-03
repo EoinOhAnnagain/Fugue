@@ -470,6 +470,10 @@ def enterQueue(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
+            if datetime.now().weekday() in (4, 5, 6):
+                closeConnection(db, cursor)
+                return "Releases may only be done Monday -> Thursday. Please enter the queue again on Monday morning", 400
+            
             if checkForCodeFreeze(cursor):
                 return "There is a code freeze in effect. New entries cannot be added to the queue until the code freeze ends", 403
 
