@@ -1,0 +1,8 @@
+name: MQAPI
+channels:
+  - defaults
+dependencies:
+  - python=3.8.8
+  - flask
+  - mysql-connector-python
+prefix: /opt/anaconda3/envs/MQAPI
