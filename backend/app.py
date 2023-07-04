@@ -46,7 +46,8 @@ def getQueueNames(cursor):
     queues = cursor.fetchall()
     returnable = []
     for q in queues:
-        returnable.append(q[0])
+        if q[0] not in ('Users', 'masterQueue'):
+            returnable.append(q[0])
     return returnable
 
 
@@ -486,7 +487,15 @@ def enterQueue(db, cursor):
 
             if request.json['componant'].lower() not in getQueueNames(cursor):
                 closeConnection(db, cursor)
-                return "Unknown"
+                return "Unknown componant", 403
+
+            cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+            occurancesOfTicket = cursor.fetchall()[0][0]
+
+            if occurancesOfTicket != 0:
+                closeConnection(db, cursor)
+                return "Ticket already in queue. There may only be one occurance of a ticket at a time", 403
+
 
             cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "`")
             numberInQueue = cursor.fetchall()
@@ -575,14 +584,28 @@ def exitQueue(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'].upper(),))
+            if len(request.json['reason']) > 100:
+                closeConnection(db, cursor)
+                return "Reason is too long. Please limit it to 400 charracters or less", 403
+
+            if request.json['componant'].lower() not in getQueueNames(cursor):
+                closeConnection(db, cursor)
+                return "Unknown componant", 403
+
+            cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+
+            if cursor.fetchall()[0][0] != 1:
+                closeConnection(db, cursor)
+                return "No matching ticket found", 403
                 
             now = datetime.now()
             currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
                 
             cursor.execute("SET SQL_SAFE_UPDATES = 0;")
             db.commit()
-            cursor.execute("UPDATE `masterQueue` SET `active` = 0, `closed` = %s WHERE (`ticket` = %s AND `componant` = %s);", (currentDT, request.json['ticket'].upper(), request.json['componant'].lower()))
+            cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'].upper(),))
+            db.commit()
+            cursor.execute("UPDATE `masterQueue` SET `active` = 0, `closed` = %s, `reasonClosed` = %s WHERE (`ticket` = %s AND `componant` = %s);", (currentDT, request.json['reason'], request.json['ticket'].upper(), request.json['componant'].lower(),))
             db.commit()
             cursor.execute("SET SQL_SAFE_UPDATES = 1;")
             db.commit()
