@@ -152,12 +152,25 @@ def checkForCodeFreeze(cursor):
 
 # Endpoints
 
-@app.route('/', methods=['PUT'])
+@app.route('/', methods=['DELETE'])
 @getStarted
 def index(db, cursor):
 
-    query = "UPDATE `" + request.json['componant'] + "` SET `description` = %s WHERE (`ticket` = %s AND `email` = %s);"
-    cursor.execute(query, (request.json['description'], request.json['ticket'], request.json['email'],))
+    cursor.execute("SET SQL_SAFE_UPDATES = 0")
+    db.commit()
+
+    queues = getQueueNames(cursor)
+
+    for componant in queues:
+        print(componant)
+        cursor.execute("DELETE FROM `" + componant + "`")
+        db.commit()
+
+    query = "DELETE FROM `masterQueue`"
+    cursor.execute(query)
+    db.commit()
+
+    cursor.execute("SET SQL_SAFE_UPDATES = 1")
     db.commit()
 
     closeConnection(db, cursor)
@@ -365,7 +378,6 @@ def deleteUser(db, cursor):
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
-
 
 
 
@@ -592,23 +604,28 @@ def exitQueue(db, cursor):
                 closeConnection(db, cursor)
                 return "Unknown componant", 403
 
-            cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+            cursor.execute("SELECT UUID, position FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+            entry = cursor.fetchall()
 
-            if cursor.fetchall()[0][0] != 1:
+            if len(entry) != 1:
                 closeConnection(db, cursor)
                 return "No matching ticket found", 403
+
+            UUID = entry[0][0]
+            position = entry[0][1]
                 
             now = datetime.now()
             currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
                 
-            cursor.execute("SET SQL_SAFE_UPDATES = 0;")
+            cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `UUID` = %s", (UUID,))
             db.commit()
-            cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'].upper(),))
+            
+            cursor.execute("UPDATE `" + request.json['componant'].lower() + "` SET position = position - 1 WHERE `position` > %s", (position,))
             db.commit()
-            cursor.execute("UPDATE `masterQueue` SET `active` = 0, `closed` = %s, `reasonClosed` = %s WHERE (`ticket` = %s AND `componant` = %s);", (currentDT, request.json['reason'], request.json['ticket'].upper(), request.json['componant'].lower(),))
+            
+            cursor.execute("UPDATE `masterQueue` SET `active` = 0, `closed` = %s, `reasonClosed` = %s WHERE (`UUID` = %s);", (currentDT, request.json['reason'], UUID,))
             db.commit()
-            cursor.execute("SET SQL_SAFE_UPDATES = 1;")
-            db.commit()
+            
             closeConnection(db, cursor)
             return "Queue exited", 200
 
@@ -688,6 +705,31 @@ def checkMasterQueue(db, cursor):
         closeConnection(db, cursor)
         return 'an error occured', 500
     
+
+@app.route('/emptyAllQueues', methods=['DELETE'])
+@getStarted
+def emptyAllQueues(db, cursor):
+
+    cursor.execute("SET SQL_SAFE_UPDATES = 0")
+    db.commit()
+
+    queues = getQueueNames(cursor)
+
+    for componant in queues:
+        print(componant)
+        cursor.execute("DELETE FROM `" + componant + "`")
+        db.commit()
+
+    query = "DELETE FROM `masterQueue`"
+    cursor.execute(query)
+    db.commit()
+
+    cursor.execute("SET SQL_SAFE_UPDATES = 1")
+    db.commit()
+
+    closeConnection(db, cursor)
+    return "Success", 200
+
 
 
 # Code freeze related endpoints
