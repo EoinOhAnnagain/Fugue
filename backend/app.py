@@ -451,6 +451,52 @@ def deleteUser(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
+@app.route('/approveUser', methods=['PUT'])
+@getStarted
+def approveUser(db, cursor):
+    if db:
+        try:
+            if not loginUser(cursor, request.json['email'], request.json['password'], True):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            cursor.execute("SELECT UUID, isDisabled, approvedBy, activationToken FROM `Users` WHERE (`email` = %s)", (request.json['userEmail'],))
+            foundUser = cursor.fetchall()
+
+            if len(foundUser) == 0:
+                closeConnection(db, cursor)
+                return "No matching users found", 400
+            elif len(foundUser) > 1:
+                closeConnection(db, cursor)
+                return "Multiple matches found. Please contact API developers", 400
+
+            foundUser = foundUser[0]
+
+            print(foundUser)
+
+            if not tiny_to_bool(foundUser[1]):
+                cursor.execute("SELECT firstName, lastName FROM `Users` WHERE `email` = %s", (request.json['email'],))
+                approver = cursor.fetchall()[0]
+                closeConnection(db, cursor)
+                return "User already approved by " + approver[0].capitalize() + " " + approver[1].capitalize() + " (" + foundUser[2] + "). If this is erroneous please message them", 400
+
+            if not foundUser[3] == decodeActivationCode(request.json['activationToken']):
+                closeConnection(db, cursor)
+                return "Bad activation token", 400
+
+            cursor.execute("UPDATE `Users` SET `isDisabled` = 0, `approvedBy` = %s WHERE (`email` = %s)", (request.json['email'], request.json['userEmail'],))
+            db.commit()
+            
+            closeConnection(db, cursor)
+            return "User is approved", 200
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
 
 # Queue endpoints
 
