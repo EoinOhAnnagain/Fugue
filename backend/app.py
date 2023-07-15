@@ -51,12 +51,57 @@ def getQueueNames(cursor):
     return returnable
 
 
-""" Method to has password provided by user. Uses username and salts from confid file. Takes in a username and password """
+""" Method to hash password provided by user. Takes in username, password, and salts from confid file. Returns a hashed password """
 def password_hash(user, password):
     password = hashlib.md5((password+user).encode())
     for salt in config.salts:
         password = hashlib.md5((password.hexdigest()+salt).encode())
     return password.hexdigest()
+
+
+""" Method to create activation token for a new user. Takes in username. Returns an activation token """
+def createActivationCode(user):
+    
+    now = datetime.now()
+    hiddenSalt = now.strftime("%m%M%d%H")
+    
+    timeSalt = now.strftime("%Y%S")
+    initialHash = hashlib.md5((user + "activation code" + timeSalt).encode()).hexdigest()
+
+    seededHash = ""
+    index = 0
+
+    for i in range(0, len(initialHash)+7):
+        if i in config.activationLocations:
+            seededHash += hiddenSalt[index]
+            index += 1
+        else:    
+            seededHash += initialHash[i-index]
+    seededHash += hiddenSalt[-1]
+
+    storeableHash = hashlib.md5((initialHash + hiddenSalt).encode()).hexdigest()
+
+    return [seededHash, storeableHash]
+
+
+""" Method to check an activation token for a new user. Takes in an activation code. Returns an activation token """
+def decodeActivationCode(code):
+
+    decodedCode = ""
+    hiddenSalt = ""
+
+    print(config.activationLocations)
+
+    for i in range(0, len(code)-1):
+        if i in config.activationLocations:
+            hiddenSalt += code[i]
+        else:
+            decodedCode += code[i]
+    hiddenSalt += code[-1]    
+
+    hashedDecodedCode = hashlib.md5((decodedCode + hiddenSalt).encode()).hexdigest()
+
+    return hashedDecodedCode
 
 
 """ Method to convert a bool to a tinyint for storage in mysql database. True becomes 1 and Flase becomes 0. Expects a boolean """
@@ -92,11 +137,8 @@ def checkUUID(cursor, employeeUUID=False, ticketUUID=False, freezeUUID=False):
 
 """ Method to check if a user exists in the database """
 def checkForUser(cursor, email, hashedPassword=False):
-    if hashedPassword:
-        print('HP')
-    else:
-        cursor.execute("SELECT COUNT(*) from `Users` WHERE `email` = %s", (email,))
-
+    
+    cursor.execute("SELECT COUNT(*) from `Users` WHERE `email` = %s", (email,))
     if cursor.fetchall()[0][0] == 1:
         return True
     else:
@@ -120,7 +162,7 @@ def testUserInputString(db, cursor, string, key, length):
     elif len(request.json["firstName"]) < 3:
         closeConnection(db, cursor)
         return key + " is too short"
-    elif key == 'email' and (string[-10:] != '@datto.com' and string[-11:] != '@kaseya.com'):
+    elif key == 'email' and not (string.endswith('@datto.com') or string.endswith('@kaseya.com')):
         closeConnection(db, cursor)
         return "Bad email submitted"
     else:
@@ -159,34 +201,28 @@ def checkForCodeFreeze(cursor):
 @getStarted
 def index(db, cursor):
 
-    cursor.execute("SELECT COUNT(*) FROM `auth-web` WHERE (`position` IN (0, 1))")
-    count = cursor.fetchall()[0][0]
-    # cursor.execute("SET SQL_SAFE_UPDATES = 0")
-    # db.commit()
+    cac = createActivationCode('eoin')
+    seededHash = cac[0]
+    storeableHash = cac[1]
 
-    # queues = getQueueNames(cursor)
+    dac = decodeActivationCode(seededHash)
 
-    # for componant in queues:
-    #     print(componant)
-    #     cursor.execute("DELETE FROM `" + componant + "`")
-    #     db.commit()
+    if storeableHash == dac:
+        print('success')
+    else:
+        print("fail")
 
-    # query = "DELETE FROM `masterQueue`"
-    # cursor.execute(query)
-    # db.commit()
 
-    # cursor.execute("SET SQL_SAFE_UPDATES = 1")
-    # db.commit()
 
     closeConnection(db, cursor)
-    return "Success: " + str(count), 200
+    return "Success: Maybe", 200
 
 
 
 
 # User management endpoints
 
-@app.route('/register', methods=['POST'])
+@app.route('/registerNewUser', methods=['POST'])
 @getStarted
 def registerNewUser(db, cursor):
 
@@ -197,29 +233,65 @@ def registerNewUser(db, cursor):
             UUID = str(uuid.uuid4().hex)
 
         if checkForUser(cursor, request.json['email']):
+            closeConnection(db, cursor)
             return "email is already in use", 400
         
         if testUserInputString(db, cursor, request.json['firstName'].lower(), 'firstName', 45) != False:
+            closeConnection(db, cursor)
             return testUserInputString(db, cursor, request.json['firstName'].lower(), 'firstName', 45), 400
         if testUserInputString(db, cursor, request.json['lastName'].lower(), 'lastName', 45) != False:
+            closeConnection(db, cursor)
             return testUserInputString(db, cursor, request.json['lastName'].lower(), 'lastName', 45), 400
         if testUserInputString(db, cursor, request.json['email'], 'email', 100) != False:
+            closeConnection(db, cursor)
             return testUserInputString(db, cursor, request.json['email'], 'email', 100), 400
         if testUserInputString(db, cursor, request.json['team'].lower(), 'team', 45) != False:
+            closeConnection(db, cursor)
             return testUserInputString(db, cursor, request.json['team'].lower(), 'team', 45), 400
 
         hashedPassword = password_hash(request.json['email'], request.json['password'])
 
+        cursor.execute("SELECT firstName, lastName FROM `Users` WHERE (`isAdmin` = 1)")
+        adminsQueryResults = cursor.fetchall()
+
+        if len(adminsQueryResults) == 0:
+
+            addUser = ("INSERT INTO Users (`UUID`, `firstName`, `lastName`, `email`, `password`, `team`, `isAdmin`, `isDisabled`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
+            userData = (UUID, request.json['firstName'].lower(), request.json['lastName'].lower(), request.json['email'], hashedPassword, request.json['team'], 1, 0)
+
+            # Execute and commit query
+            cursor.execute(addUser, userData)
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "No admins currently exist. You are now the active admin. Please create more admins if needed and contact the API's engineers if this is an unexpected result.", 200
+
+        activationsCodes = createActivationCode(str(request.json['firstName'] + request.json['lastName'] + request.json['email']))
+
         # Create query
-        addUser = ("INSERT INTO Users (`UUID`, `firstName`, `lastName`, `email`, `password`, `team`) VALUES (%s, %s, %s, %s, %s, %s)")
-        userData = (UUID, request.json['firstName'].lower(), request.json['lastName'].lower(), request.json['email'], hashedPassword, request.json['team'])
+        addUser = ("INSERT INTO Users (`UUID`, `firstName`, `lastName`, `email`, `password`, `team`, `isAdmin`, `isDisabled`, `activationToken`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)")
+        userData = (UUID, request.json['firstName'].lower(), request.json['lastName'].lower(), request.json['email'], hashedPassword, request.json['team'], 0, 1, activationsCodes[1])
 
         # Execute and commit query
         cursor.execute(addUser, userData)
         db.commit()
 
+        admins = []
+        for a in adminsQueryResults:
+            admins.append(str(a[0].capitalize() + " " + a[1].capitalize()))
+
+        message = "Hi, " + request.json['firstName'] + " " + request.json['lastName'] + " (" + request.json['email'] + ") has regestered with the queueing API and needs their account enabled. The activation code for their account is: " + activationsCodes[0] + ". Thank you and sorry for the inconvenience."
+
+        returnable = {
+            "Congratulations": "Your user has been successfully created. However, your account is currently disabled. Please send the enclosed message to one of the admins to activate your account",
+            "Current Admins": admins,
+            "Message": message
+        }
+
+        json_dump = jsonify(returnable)
+
         closeConnection(db, cursor)
-        return "User Created", 200
+        return json_dump, 200
 
     else:
         closeConnection(db, cursor)
@@ -234,23 +306,17 @@ def toggleAdmin(db, cursor):
 
             cursor.execute("SELECT COUNT(*) FROM Users WHERE isAdmin = 1")
             adminCount = cursor.fetchall()[0][0]
-            
-            print(adminCount)
 
             if adminCount == 0:
-                print("0 found")
+            
                 if not loginUser(cursor, request.json['email'], request.json['password']):
-                    print("not log in")
                     closeConnection(db, cursor)
                     return "Login Failed", 400
 
                 cursor.execute("UPDATE `Users` SET `isAdmin` = 1 WHERE (`email` = %s)", (request.json['targetEmail'],))
                 db.commit()
 
-                print("woop")
                 closeConnection(db, cursor)
-                print("woop")
-                
                 return "Emergency admin succesfully created", 200
 
             else:
@@ -458,7 +524,6 @@ def checkQueue(db, cursor):
                     entriesArray.append(entry.copy())
                 returnable = sorted(entriesArray, key=lambda x: x['position'])
 
-                print(returnable[0]['position'])
                 returnable[0]['position'] = "Releasing" if returnable[0]['position'] == 0 else returnable[0]['position']
 
                 json_dump = jsonify(returnable)
@@ -558,16 +623,11 @@ def updateTicketDescription(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            print('egfyiewgi')
-
             if len(request.json['description']) > 400:
                 closeConnection(db, cursor)
                 return "Description is too long. Please limit it to 400 charracters or less", 403
 
-            p("fnrwuoghour")
-
             query = "SELECT COUNT(*) FROM `" + request.json['componant'] + "` WHERE (`ticket` = %s AND `email` = %s)"
-            print(query)
             cursor.execute(query, (request.json['ticket'], request.json['email'],))
             
             if cursor.fetchall()[0][0] == 0:
@@ -628,8 +688,6 @@ def exitQueue(db, cursor):
             cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `UUID` = %s", (UUID,))
             db.commit()
             
-            
-            print(queueHeadCount)
             if queueHeadCount != 2:
                 cursor.execute("UPDATE `" + request.json['componant'].lower() + "` SET position = position - 1 WHERE (`position` > %s)", (position,))
                 db.commit()
@@ -691,7 +749,6 @@ def priorityQueueEntry(db, cursor):
     if db:
         try:
 
-            print('starting')
             if not loginUser(cursor, request.json['email'], request.json['password']):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
@@ -745,14 +802,9 @@ def priorityQueueEntry(db, cursor):
 
             ticketPosition = 1 if takenPosition[0][0] == 0 else 0
 
-            print(takenPosition)
-            print(ticketPosition)
-
             entryQuery = ("INSERT INTO `" + request.json['componant'].lower() + "` (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
             entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], userDetails[2], currentDT, ticketPosition)
 
-            p(entryQuery)
-            print(entryData)
             cursor.execute(entryQuery, entryData)
 
             entryQuery = ("INSERT INTO masterQueue (`UUID`, `ticket`, `description`, `componant`, `email`, `teamName`, `active`, `opened`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
@@ -852,7 +904,6 @@ def emptyAllQueues(db, cursor):
     queues = getQueueNames(cursor)
 
     for componant in queues:
-        print(componant)
         cursor.execute("DELETE FROM `" + componant + "`")
         db.commit()
 
@@ -919,10 +970,7 @@ def endActiveCodeFreeze(db, cursor):
             cursor.execute("SELECT UUID FROM `CodeFreezes` WHERE `inEffect` = 1")
             UUIDs = cursor.fetchall()
 
-            print(UUIDs)
-
             for UUID in UUIDs:
-                print(UUID)
                 cursor.execute("UPDATE `CodeFreezes` SET `inEffect` = 0 WHERE (`UUID` = %s)", (UUID[0],))    
             db.commit()
 
@@ -953,8 +1001,6 @@ def checkFreezes(db, cursor):
             query = "SELECT * FROM `CodeFreezes`"
 
             query += " WHERE `inEffect` = 1" if tiny_to_bool(request.json['activeOnly']) else " WHERE (`begins` > CURDATE() AND `inEffect` = 0)" if tiny_to_bool(request.json['futureOnly']) else ""
-            
-            print(query)
 
             cursor.execute(query)
             freezes = cursor.fetchall()
