@@ -90,8 +90,6 @@ def decodeActivationCode(code):
     decodedCode = ""
     hiddenSalt = ""
 
-    print(config.activationLocations)
-
     for i in range(0, len(code)-1):
         if i in config.activationLocations:
             hiddenSalt += code[i]
@@ -471,8 +469,6 @@ def approveUser(db, cursor):
                 return "Multiple matches found. Please contact API developers", 400
 
             foundUser = foundUser[0]
-
-            print(foundUser)
 
             if not tiny_to_bool(foundUser[1]):
                 cursor.execute("SELECT firstName, lastName FROM `Users` WHERE `email` = %s", (request.json['email'],))
