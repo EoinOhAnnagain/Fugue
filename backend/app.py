@@ -1,4 +1,3 @@
-import queue
 from flask import Flask, request, jsonify
 import config, uuid, mysql.connector, hashlib
 from mysql.connector import errorcode
@@ -156,29 +155,31 @@ def checkForCodeFreeze(cursor):
 
 # Endpoints
 
-@app.route('/', methods=['DELETE'])
+@app.route('/', methods=['GET'])
 @getStarted
 def index(db, cursor):
 
-    cursor.execute("SET SQL_SAFE_UPDATES = 0")
-    db.commit()
+    cursor.execute("SELECT COUNT(*) FROM `auth-web` WHERE (`position` IN (0, 1))")
+    count = cursor.fetchall()[0][0]
+    # cursor.execute("SET SQL_SAFE_UPDATES = 0")
+    # db.commit()
 
-    queues = getQueueNames(cursor)
+    # queues = getQueueNames(cursor)
 
-    for componant in queues:
-        print(componant)
-        cursor.execute("DELETE FROM `" + componant + "`")
-        db.commit()
+    # for componant in queues:
+    #     print(componant)
+    #     cursor.execute("DELETE FROM `" + componant + "`")
+    #     db.commit()
 
-    query = "DELETE FROM `masterQueue`"
-    cursor.execute(query)
-    db.commit()
+    # query = "DELETE FROM `masterQueue`"
+    # cursor.execute(query)
+    # db.commit()
 
-    cursor.execute("SET SQL_SAFE_UPDATES = 1")
-    db.commit()
+    # cursor.execute("SET SQL_SAFE_UPDATES = 1")
+    # db.commit()
 
     closeConnection(db, cursor)
-    return "Success", 200
+    return "Success: " + str(count), 200
 
 
 
@@ -385,7 +386,7 @@ def deleteUser(db, cursor):
 
 
 
-# General Queue endpoints
+# Queue endpoints
 
 @app.route('/getQueueNames', methods=['GET'])
 @getStarted
@@ -423,10 +424,7 @@ def checkQueue(db, cursor):
             entries = cursor.fetchall()
 
             if len(entries) == 0:
-            
                 closeConnection(db, cursor)
-                 
-
                 return queueName.lower() + " is empty", 200
     
             entriesArray = []
@@ -444,7 +442,7 @@ def checkQueue(db, cursor):
 
                 returnable = sorted(entriesArray, key=lambda x: x['position'])
 
-                returnable[0]['position'] = "Releasing"
+                returnable[0]['position'] = "Releasing" if returnable[0]['position'] == 0 else returnable[0]['position']
                 
                 json_dump = jsonify(returnable)
 
@@ -460,7 +458,8 @@ def checkQueue(db, cursor):
                     entriesArray.append(entry.copy())
                 returnable = sorted(entriesArray, key=lambda x: x['position'])
 
-                returnable[0]['position'] = "Releasing"
+                print(returnable[0]['position'])
+                returnable[0]['position'] = "Releasing" if returnable[0]['position'] == 0 else returnable[0]['position']
 
                 json_dump = jsonify(returnable)
 
@@ -489,8 +488,6 @@ def enterQueue(db, cursor):
 
             cursor.execute("SELECT isAdmin, bypassCodeFreeze, team FROM `Users` WHERE `email` = %s", (request.json['email'],))
             userDetails = cursor.fetchall()[0]
-
-            print(userDetails)
 
             canBypassCodeFreezes = False if not tiny_to_bool(userDetails[0]) and not tiny_to_bool(userDetails[1]) else True
         
@@ -543,7 +540,6 @@ def enterQueue(db, cursor):
             db.commit()
             
             closeConnection(db, cursor)
-
             return "Successfully in queue. your posiiton is " + str(numberInQueue[0][0]+1), 200
         except:
             closeConnection(db, cursor)
@@ -625,12 +621,18 @@ def exitQueue(db, cursor):
                 
             now = datetime.now()
             currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
+
+            cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "` WHERE (`position` IN (0, 1))")
+            queueHeadCount = cursor.fetchall()[0][0]
                 
             cursor.execute("DELETE FROM `" + request.json['componant'].lower() + "` WHERE `UUID` = %s", (UUID,))
             db.commit()
             
-            cursor.execute("UPDATE `" + request.json['componant'].lower() + "` SET position = position - 1 WHERE `position` > %s", (position,))
-            db.commit()
+            
+            print(queueHeadCount)
+            if queueHeadCount != 2:
+                cursor.execute("UPDATE `" + request.json['componant'].lower() + "` SET position = position - 1 WHERE (`position` > %s)", (position,))
+                db.commit()
             
             cursor.execute("UPDATE `masterQueue` SET `active` = 0, `closed` = %s, `reasonClosed` = %s WHERE (`UUID` = %s);", (currentDT, request.json['reason'], UUID,))
             db.commit()
@@ -646,6 +648,131 @@ def exitQueue(db, cursor):
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
 
+
+@app.route('/releasing', methods=['PUT'])
+@getStarted
+def releasing(db, cursor):
+    if db:
+        try:
+            if not loginUser(cursor, request.json['email'], request.json['password']):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            cursor.execute("SELECT UUID, position FROM `" + request.json['componant'] + "` WHERE (`email` = %s AND `ticket` = %s);", (request.json['email'], request.json['ticket'],))
+            entry = cursor.fetchall()
+
+            if len(entry) == 0:
+                closeConnection(db, cursor)
+                return "No tickets found in your name", 400
+            elif len(entry) > 1:
+                closeConnection(db, cursor)
+                return "Erroneous number of ticket found", 400
+
+            if entry[0][1] != 1:
+                closeConnection(db, cursor)
+                return "It is not your turn to release. Please create a priority ticket, after deleting this ticket, if you need to bypass the queue", 400
+
+            cursor.execute("UPDATE `" + request.json['componant'] + "` SET `position` = 0 WHERE (`UUID` = %s)", (entry[0][0],))
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "Done", 200
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+@app.route('/priorityQueueEntry', methods=['POST'])
+@getStarted
+def priorityQueueEntry(db, cursor):
+    if db:
+        try:
+
+            print('starting')
+            if not loginUser(cursor, request.json['email'], request.json['password']):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            cursor.execute("SELECT isAdmin, bypassCodeFreeze, team FROM `Users` WHERE `email` = %s", (request.json['email'],))
+            userDetails = cursor.fetchall()[0]
+
+            canBypassCodeFreezes = False if not tiny_to_bool(userDetails[0]) and not tiny_to_bool(userDetails[1]) else True
+        
+            if datetime.now().weekday() in (4, 5, 6) and not canBypassCodeFreezes:
+                closeConnection(db, cursor)
+                return "Releases may only be done Monday -> Thursday. Please enter the queue again on Monday morning", 400
+        
+            if checkForCodeFreeze(cursor) and not canBypassCodeFreezes:
+                return "There is a code freeze in effect. New entries cannot be added to the queue until the code freeze ends", 403
+
+            if len(request.json['description']) > 400:
+                closeConnection(db, cursor)
+                return "Description is too long. Please limit it to 400 charracters or less", 403
+
+            if request.json['componant'].lower() not in getQueueNames(cursor):
+                closeConnection(db, cursor)
+                return "Unknown componant", 403
+
+            if canBypassCodeFreezes:
+                cursor.execute("UPDATE `Users` SET `bypassCodeFreeze` = 0 WHERE `email` = %s", (request.json['email'],))
+
+            cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
+            occurancesOfTicket = cursor.fetchall()[0][0]
+
+            if occurancesOfTicket != 0:
+                closeConnection(db, cursor)
+                return "Ticket already in queue. There may only be one occurance of a ticket at a time", 403
+
+
+            cursor.execute("SELECT position, email FROM `" + request.json['componant'].lower() + "` WHERE (`position` IN (0, 1))")
+            takenPosition = cursor.fetchall()
+
+            if len(takenPosition) == 2:
+                cursor.execute("SELECT firstName, lastName FROM `Users` WHERE (`email` = %s)", (takenPosition[1][1],))
+                user = cursor.fetchall()
+                closeConnection(db, cursor)
+                return "" + user[0][0].capitalize() + " " + user[0][1].capitalize() + " is already awaiting a priority release. Please discuss with them which ticket should take priority", 403
+
+            UUID = str(uuid.uuid4().hex)
+            while checkUUID(cursor, ticketUUID=UUID):
+                UUID = str(uuid.uuid4().hex)
+
+            now = datetime.now()
+            currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
+
+            ticketPosition = 1 if takenPosition[0][0] == 0 else 0
+
+            print(takenPosition)
+            print(ticketPosition)
+
+            entryQuery = ("INSERT INTO `" + request.json['componant'].lower() + "` (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], userDetails[2], currentDT, ticketPosition)
+
+            p(entryQuery)
+            print(entryData)
+            cursor.execute(entryQuery, entryData)
+
+            entryQuery = ("INSERT INTO masterQueue (`UUID`, `ticket`, `description`, `componant`, `email`, `teamName`, `active`, `opened`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'], request.json['email'], userDetails[2], bool_to_tiny(True), currentDT)
+
+            cursor.execute(entryQuery, entryData)
+            db.commit()
+            
+            closeConnection(db, cursor)
+
+            if ticketPosition == 1:
+                return "There is currently a ticket being released. You are next in line once they have released.", 200
+            return "Your priority ticket has been added to the queue and is set to releasing.", 200
+
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
 
 
 # Master queue endpoints
@@ -920,9 +1047,6 @@ def allowEmployeeBypassCodeFreeze(db, cursor):
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
 
-
-
-""" !!!!!!!!!! A Priority Release endpoint is needed !!!!!!!!!! """
 
 
 # Endpoint skeleton
