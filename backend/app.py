@@ -593,29 +593,23 @@ def enterQueue(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT isAdmin, bypassCodeFreeze, team FROM `Users` WHERE `email` = %s", (request.json['email'],))
-            userDetails = cursor.fetchall()[0]
-
-            canBypassCodeFreezes = False if not tiny_to_bool(userDetails[0]) and not tiny_to_bool(userDetails[1]) else True
+            cursor.execute("SELECT team FROM `Users` WHERE `email` = %s", (request.json['email'],))
+            teamName = cursor.fetchall()[0][0]
         
-            if datetime.now().weekday() in (4, 5, 6) and not canBypassCodeFreezes:
+            if datetime.now().weekday() in (4, 5, 6):
                 closeConnection(db, cursor)
                 return "Releases may only be done Monday -> Thursday. Please enter the queue again on Monday morning", 400
         
-            if checkForCodeFreeze(cursor) and not canBypassCodeFreezes:
+            if checkForCodeFreeze(cursor):
                 return "There is a code freeze in effect. New entries cannot be added to the queue until the code freeze ends", 403
 
             if len(request.json['description']) > 400:
                 closeConnection(db, cursor)
                 return "Description is too long. Please limit it to 400 charracters or less", 403
 
-
             if request.json['componant'].lower() not in getQueueNames(cursor):
                 closeConnection(db, cursor)
                 return "Unknown componant", 403
-
-            if canBypassCodeFreezes:
-                cursor.execute("UPDATE `Users` SET `bypassCodeFreeze` = 0 WHERE `email` = %s", (request.json['email'],))
 
             cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
             occurancesOfTicket = cursor.fetchall()[0][0]
@@ -623,7 +617,6 @@ def enterQueue(db, cursor):
             if occurancesOfTicket != 0:
                 closeConnection(db, cursor)
                 return "Ticket already in queue. There may only be one occurance of a ticket at a time", 403
-
 
             cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "`")
             numberInQueue = cursor.fetchall()
@@ -636,12 +629,12 @@ def enterQueue(db, cursor):
             currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
 
             entryQuery = ("INSERT INTO `" + request.json['componant'].lower() + "` (`UUID`, `ticket`, `description`, `email`, `teamName`, `opened`, `position`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
-            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], userDetails[2], currentDT, numberInQueue[0][0]+1)
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['email'], teamName, currentDT, numberInQueue[0][0]+1)
 
             cursor.execute(entryQuery, entryData)
 
             entryQuery = ("INSERT INTO masterQueue (`UUID`, `ticket`, `description`, `componant`, `email`, `teamName`, `active`, `opened`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
-            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'], request.json['email'], userDetails[2], bool_to_tiny(True), currentDT)
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'], request.json['email'], teamName, bool_to_tiny(True), currentDT)
 
             cursor.execute(entryQuery, entryData)
             db.commit()
@@ -679,8 +672,6 @@ def updateTicketDescription(db, cursor):
             query = "UPDATE `" + request.json['componant'] + "` SET `description` = %s WHERE (`ticket` = %s AND `email` = %s);"
             cursor.execute(query, (request.json['description'], request.json['ticket'], request.json['email'],))
             db.commit()
-
-
 
             closeConnection(db, cursor)
             return "Done", 200
@@ -795,17 +786,14 @@ def priorityQueueEntry(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT isAdmin, bypassCodeFreeze, team FROM `Users` WHERE `email` = %s", (request.json['email'],))
+            cursor.execute("SELECT isAdmin, priorityReleaseApproved, team FROM `Users` WHERE `email` = %s", (request.json['email'],))
             userDetails = cursor.fetchall()[0]
 
             canBypassCodeFreezes = False if not tiny_to_bool(userDetails[0]) and not tiny_to_bool(userDetails[1]) else True
         
-            if datetime.now().weekday() in (4, 5, 6) and not canBypassCodeFreezes:
+            if not canBypassCodeFreezes:
                 closeConnection(db, cursor)
-                return "Releases may only be done Monday -> Thursday. Please enter the queue again on Monday morning", 400
-        
-            if checkForCodeFreeze(cursor) and not canBypassCodeFreezes:
-                return "There is a code freeze in effect. New entries cannot be added to the queue until the code freeze ends", 403
+                return "You do not have permission for a prioirty release", 400
 
             if len(request.json['description']) > 400:
                 closeConnection(db, cursor)
@@ -815,16 +803,15 @@ def priorityQueueEntry(db, cursor):
                 closeConnection(db, cursor)
                 return "Unknown componant", 403
 
-            if canBypassCodeFreezes:
-                cursor.execute("UPDATE `Users` SET `bypassCodeFreeze` = 0 WHERE `email` = %s", (request.json['email'],))
-
             cursor.execute("SELECT COUNT(*) FROM `" + request.json['componant'].lower() + "` WHERE `ticket` = %s", (request.json['ticket'],))
             occurancesOfTicket = cursor.fetchall()[0][0]
 
             if occurancesOfTicket != 0:
                 closeConnection(db, cursor)
-                return "Ticket already in queue. There may only be one occurance of a ticket at a time", 403
+                return "Ticket already in queue. There may only be one occurance of a ticket at a time.", 403
 
+            if canBypassCodeFreezes:
+                cursor.execute("UPDATE `Users` SET `priorityReleaseApproved` = 0 WHERE `email` = %s", (request.json['email'],))
 
             cursor.execute("SELECT position, email FROM `" + request.json['componant'].lower() + "` WHERE (`position` IN (0, 1))")
             takenPosition = cursor.fetchall()
@@ -867,6 +854,7 @@ def priorityQueueEntry(db, cursor):
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
+
 
 
 # Master queue endpoints
@@ -1092,7 +1080,7 @@ def endFreeze(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
-@app.route('/allowEmployeeBypassCodeFreeze', methods=['PUT'])
+@app.route('/allowEmployeePriorityRelease', methods=['PUT'])
 @getStarted
 def allowEmployeeBypassCodeFreeze(db, cursor):
     if db:
@@ -1101,7 +1089,7 @@ def allowEmployeeBypassCodeFreeze(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT UUID, isAdmin, bypassCodeFreeze, firstName, lastName FROM `Users` WHERE `email` = %s", (request.json['employeeEmail'],))
+            cursor.execute("SELECT UUID, isAdmin, priorityReleaseApproved, firstName, lastName FROM `Users` WHERE `email` = %s", (request.json['employeeEmail'],))
             
             employee = cursor.fetchall()
 
@@ -1116,13 +1104,13 @@ def allowEmployeeBypassCodeFreeze(db, cursor):
                 return "Employee is admin and doesn't need override", 200
 
             if tiny_to_bool(employee[2]):
-                cursor.execute("UPDATE `Users` SET `bypassCodeFreeze` = 0 WHERE (`UUID` = %s)", (employee[0],))
+                cursor.execute("UPDATE `Users` SET `priorityReleaseApproved` = 0 WHERE (`UUID` = %s)", (employee[0],))
                 db.commit()
 
                 closeConnection(db, cursor)
                 return ("" + employee[3] + " " + employee[4] + " no longer has permission to release today"), 200
 
-            cursor.execute("UPDATE `Users` SET `bypassCodeFreeze` = 1 WHERE (`UUID` = %s)", (employee[0],))
+            cursor.execute("UPDATE `Users` SET `priorityReleaseApproved` = 1 WHERE (`UUID` = %s)", (employee[0],))
             db.commit()
 
             closeConnection(db, cursor)
