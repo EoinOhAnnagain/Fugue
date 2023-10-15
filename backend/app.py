@@ -1,17 +1,36 @@
+from re import T
+from time import sleep, timezone
+from webbrowser import get
 from flask import Flask, request, jsonify
 import config, uuid, mysql.connector, hashlib
 from mysql.connector import errorcode
 from functools import wraps
 from datetime import datetime, timedelta
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
-
-
+    
+defaultTableNames = ['FugueUsers', 'FugueMasterQueue', 'FugueCodeFreezes']
 
 # Methods
 
 def p(p):
     print(p)
+
+
+def nightlyFrozenQueueUpdate():
+
+    db = create_db_connection()
+    cursor = db.cursor()
+
+    cursor.execute('SELECT UUID, begins, durationCounter, ends, active, indefinite FROM FugueCodeFreezes WHERE endedAt IS NOT NULL')
+
+    test = cursor.fetchall()
+
+    for t in test:
+        p(t)
+    
+
 
 
 """ Wrapped method to setup endpoint """
@@ -42,13 +61,10 @@ def create_db_connection():
 
 """ Method to get the names of all componants users can queue in. Returns an array of all queue names as strings. Takes in the cursor """
 def getQueueNames(cursor):
-    cursor.execute("SHOW TABLES;")
+    cursor.execute("SELECT queueName FROM FugueQueues ORDER BY queueName;")
     queues = cursor.fetchall()
-    returnable = []
-    for q in queues:
-        if q[0] not in ('Users', 'masterQueue'):
-            returnable.append(q[0])
-    return returnable
+
+    return [q[0] for q in queues]
 
 
 """ Method to hash password provided by user. Takes in username, password, and salts from confid file. Returns a hashed password """
@@ -119,13 +135,16 @@ def tiny_to_bool(x):
 
 
 """ Method to check if a generated UUID is already present in the database. Returns a boolean. Takes in the cursor and a UUID in one of the optional arguements """
-def checkUUID(cursor, employeeUUID=False, ticketUUID=False, freezeUUID=False):
-    if employeeUUID:
-        cursor.execute("SELECT COUNT(*) from Users WHERE `UUID` = %s", (employeeUUID,))
+def checkUUID(cursor, userUUID=False, ticketUUID=False, freezeUUID=False, queueUUID=False):
+    print('In Check', userUUID, ticketUUID, freezeUUID, queueUUID , sep=' : ')
+    if userUUID:
+        cursor.execute("SELECT COUNT(*) from FugueUsers WHERE `UUID` = %s", (userUUID,))
     elif ticketUUID:
-        cursor.execute("SELECT COUNT(*) from masterQueue WHERE `UUID` = %s", (ticketUUID,))
+        cursor.execute("SELECT COUNT(*) from FugueMasterQueue WHERE `UUID` = %s", (ticketUUID,))
     elif freezeUUID:
-        cursor.execute("SELECT COUNT(*) from CodeFreezes WHERE `UUID` = %s", (employeeUUID,))
+        cursor.execute("SELECT COUNT(*) from FugueCodeFreezes WHERE `UUID` = %s", (freezeUUID,))
+    elif queueUUID:
+        cursor.execute("SELECT COUNT(*) from FugueQueues WHERE `UUID` = %s", (queueUUID,))
 
     if cursor.fetchall()[0][0] == 1:
         return True
@@ -136,7 +155,7 @@ def checkUUID(cursor, employeeUUID=False, ticketUUID=False, freezeUUID=False):
 """ Method to check if a user exists in the database """
 def checkForUser(cursor, email, hashedPassword=False):
     
-    cursor.execute("SELECT COUNT(*) from `Users` WHERE `email` = %s", (email,))
+    cursor.execute("SELECT COUNT(*) from `FugueUsers` WHERE `email` = %s", (email,))
     if cursor.fetchall()[0][0] == 1:
         return True
     else:
@@ -169,7 +188,7 @@ def testUserInputString(db, cursor, string, key, length):
 
 """ Method to log a user in. Returns a boolean. Takes in the cursor, the users email and password, and an optional boolean indicating if the user needs admin privileges """
 def loginUser(cursor, email, password, admin=False):
-    cursor.execute("SELECT isAdmin from `Users` WHERE `email` = %s AND `password` = %s", (email, password_hash(email, password)))
+    cursor.execute("SELECT isAdmin from `FugueUsers` WHERE `email` = %s AND `password` = %s", (email, password_hash(email, password)))
     result = cursor.fetchall()
 
     if len(result) == 0:
@@ -179,14 +198,13 @@ def loginUser(cursor, email, password, admin=False):
     elif not admin and len(result) == 1:
         return True
     else:
-        print("Unexpected")
         return False
         
 
 """ Method to check if there is a general code freeze in effect. Returns True if there is a code freeze. Takes in the cursor """
 def checkForCodeFreeze(cursor):
     
-    cursor.execute("SELECT COUNT(*) FROM `CodeFreezes` WHERE begins <= CURDATE() AND ends >= CURDATE() AND inEffect = true;")
+    cursor.execute("SELECT COUNT(*) FROM `FugueCodeFreezes` WHERE begins <= CURDATE() AND ends >= CURDATE() AND active = true;")
     return True if (cursor.fetchall())[0][0] != 0 else False 
 
 
@@ -199,18 +217,20 @@ def checkForCodeFreeze(cursor):
 @getStarted
 def index(db, cursor):
 
-    cac = createActivationCode('eoin')
-    seededHash = cac[0]
-    storeableHash = cac[1]
+    cursor.execute("SELECT UUID FROM FugueCodeFreezes")
+    results = cursor.fetchall()
 
-    dac = decodeActivationCode(seededHash)
+    freezeUUIDs = {}
+    for r in results:
+        freezeUUIDs[r[0]] = []
 
-    if storeableHash == dac:
-        print('success')
-    else:
-        print("fail")
+    for freezeUUID in freezeUUIDs:
+        cursor.execute("SELECT frozenQueueNames FROM FugueFrozenQueues WHERE freezeUUID = %s", (freezeUUID,))
 
-
+        frozenQueues = cursor.fetchall()
+        for frozenQueue in frozenQueues:
+            freezeUUIDs[freezeUUID].append(frozenQueue[0])
+    
 
     closeConnection(db, cursor)
     return "Success: Maybe", 200
@@ -249,13 +269,13 @@ def registerNewUser(db, cursor):
 
         hashedPassword = password_hash(request.json['email'], request.json['password'])
 
-        cursor.execute("SELECT firstName, lastName FROM `Users` WHERE (`isAdmin` = 1)")
+        cursor.execute("SELECT firstName, lastName FROM `FugueUsers` WHERE (`isAdmin` = 1)")
         adminsQueryResults = cursor.fetchall()
 
         if len(adminsQueryResults) == 0:
 
-            addUser = ("INSERT INTO Users (`UUID`, `firstName`, `lastName`, `email`, `password`, `team`, `isAdmin`, `isDisabled`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
-            userData = (UUID, request.json['firstName'].lower(), request.json['lastName'].lower(), request.json['email'], hashedPassword, request.json['team'], 1, 0)
+            addUser = ("INSERT INTO FugueUsers (`UUID`, `firstName`, `lastName`, `email`, `password`, `team`, `isAdmin`, `isDisabled`, approvedBy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)")
+            userData = (UUID, request.json['firstName'].lower(), request.json['lastName'].lower(), request.json['email'], hashedPassword, request.json['team'], 1, 0, 'system')
 
             # Execute and commit query
             cursor.execute(addUser, userData)
@@ -267,7 +287,7 @@ def registerNewUser(db, cursor):
         activationsCodes = createActivationCode(str(request.json['firstName'] + request.json['lastName'] + request.json['email']))
 
         # Create query
-        addUser = ("INSERT INTO Users (`UUID`, `firstName`, `lastName`, `email`, `password`, `team`, `isAdmin`, `isDisabled`, `activationToken`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)")
+        addUser = ("INSERT INTO FugueUsers (`UUID`, `firstName`, `lastName`, `email`, `password`, `team`, `isAdmin`, `isDisabled`, `activationToken`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)")
         userData = (UUID, request.json['firstName'].lower(), request.json['lastName'].lower(), request.json['email'], hashedPassword, request.json['team'], 0, 1, activationsCodes[1])
 
         # Execute and commit query
@@ -302,7 +322,7 @@ def toggleAdmin(db, cursor):
     if db:
         try:
 
-            cursor.execute("SELECT COUNT(*) FROM Users WHERE isAdmin = 1")
+            cursor.execute("SELECT COUNT(*) FROM FugueUsers WHERE isAdmin = 1")
             adminCount = cursor.fetchall()[0][0]
 
             if adminCount == 0:
@@ -311,7 +331,7 @@ def toggleAdmin(db, cursor):
                     closeConnection(db, cursor)
                     return "Login Failed", 400
 
-                cursor.execute("UPDATE `Users` SET `isAdmin` = 1 WHERE (`email` = %s)", (request.json['targetEmail'],))
+                cursor.execute("UPDATE `FugueUsers` SET `isAdmin` = 1 WHERE (`email` = %s)", (request.json['targetEmail'],))
                 db.commit()
 
                 closeConnection(db, cursor)
@@ -328,7 +348,7 @@ def toggleAdmin(db, cursor):
                     closeConnection(db, cursor)
                     return "Cannot toggle as you are the only admin. Create another admin first", 403
 
-                cursor.execute("SELECt COUNT(*), isAdmin FROM `Users` WHERE `email` = %s", (request.json['targetEmail'],))
+                cursor.execute("SELECT COUNT(*), isAdmin FROM `FugueUsers` WHERE `email` = %s", (request.json['targetEmail'],))
                 userFound = cursor.fetchall()[0]
 
                 if userFound[0] == 0:
@@ -336,12 +356,12 @@ def toggleAdmin(db, cursor):
                     return "Target not found", 403
 
                 if userFound[1] == 1:
-                    cursor.execute("UPDATE `Users` SET `isAdmin` = 0 WHERE (`email` = %s)", (request.json['targetEmail'],))
+                    cursor.execute("UPDATE `FugueUsers` SET `isAdmin` = 0 WHERE (`email` = %s)", (request.json['targetEmail'],))
                     db.commit()
                     closeConnection(db, cursor)
                     return "Target is no longer an Admin", 200
                 else:
-                    cursor.execute("UPDATE `Users` SET `isAdmin` = 1 WHERE (`email` = %s)", (request.json['targetEmail'],))
+                    cursor.execute("UPDATE `FugueUsers` SET `isAdmin` = 1 WHERE (`email` = %s)", (request.json['targetEmail'],))
                     db.commit()
                     closeConnection(db, cursor)
                     return "Target is now an Admin", 200
@@ -364,7 +384,7 @@ def deleteSelf(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT COUNT(*), isAdmin FROM `Users` WHERE (`email` = %s)", (request.json['email'],))
+            cursor.execute("SELECT COUNT(*), isAdmin FROM `FugueUsers` WHERE (`email` = %s)", (request.json['email'],))
             userFound = cursor.fetchall()[0]
 
             if userFound[0] == 0:
@@ -373,14 +393,14 @@ def deleteSelf(db, cursor):
 
             if userFound[1] == 1:
 
-                cursor.execute("SELECT COUNT(*) FROM `Users` WHERE (`isAdmin` = 1)")
+                cursor.execute("SELECT COUNT(*) FROM `FugueUsers` WHERE (`isAdmin` = 1)")
                 if cursor.fetchall()[0][0] == 1:
                     closeConnection(db, cursor)
                     return "Deleting yourself would leave no Admins. Please create a new admin first", 403
 
-            cursor.execute("SELECT UUID FROM Users WHERE email = %s", (request.json['email'],))
+            cursor.execute("SELECT UUID FROM FugueUsers WHERE email = %s", (request.json['email'],))
             userUUID = cursor.fetchall()[0][0]
-            cursor.execute("DELETE FROM `Users` WHERE (`UUID` = %s);", (userUUID,))
+            cursor.execute("DELETE FROM `FugueUsers` WHERE (`UUID` = %s);", (userUUID,))
             db.commit()
 
             closeConnection(db, cursor)
@@ -417,16 +437,16 @@ def deleteUser(db, cursor):
                 closeConnection(db, cursor)
                 return "This endpoint is not fo deleting oneslef", 403
 
-            cursor.execute("SELECT COUNT(*) FROM `Users` WHERE (`email` = %s)", (request.json['targetEmail'],))
+            cursor.execute("SELECT COUNT(*) FROM `FugueUsers` WHERE (`email` = %s)", (request.json['targetEmail'],))
             userFound = cursor.fetchall()[0]
 
             if userFound[0] == 0:
                 closeConnection(db, cursor)
                 return "User not found", 403
 
-            cursor.execute("SELECT UUID FROM Users WHERE email = %s", (request.json['targetEmail'],))
+            cursor.execute("SELECT UUID FROM FugueUsers WHERE email = %s", (request.json['targetEmail'],))
             userUUID = cursor.fetchall()[0][0]
-            cursor.execute("DELETE FROM `Users` WHERE (`UUID` = %s);", (userUUID,))
+            cursor.execute("DELETE FROM `FugueUsers` WHERE (`UUID` = %s);", (userUUID,))
             db.commit()
 
             closeConnection(db, cursor)
@@ -458,7 +478,7 @@ def approveUser(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT UUID, isDisabled, approvedBy, activationToken FROM `Users` WHERE (`email` = %s)", (request.json['userEmail'],))
+            cursor.execute("SELECT UUID, isDisabled, approvedBy, activationToken FROM `FugueUsers` WHERE (`email` = %s)", (request.json['userEmail'],))
             foundUser = cursor.fetchall()
 
             if len(foundUser) == 0:
@@ -471,7 +491,7 @@ def approveUser(db, cursor):
             foundUser = foundUser[0]
 
             if not tiny_to_bool(foundUser[1]):
-                cursor.execute("SELECT firstName, lastName FROM `Users` WHERE `email` = %s", (request.json['email'],))
+                cursor.execute("SELECT firstName, lastName FROM `FugueUsers` WHERE `email` = %s", (request.json['email'],))
                 approver = cursor.fetchall()[0]
                 closeConnection(db, cursor)
                 return "User already approved by " + approver[0].capitalize() + " " + approver[1].capitalize() + " (" + foundUser[2] + "). If this is erroneous please message them", 400
@@ -480,7 +500,7 @@ def approveUser(db, cursor):
                 closeConnection(db, cursor)
                 return "Bad activation token", 400
 
-            cursor.execute("UPDATE `Users` SET `isDisabled` = 0, `approvedBy` = %s WHERE (`email` = %s)", (request.json['email'], request.json['userEmail'],))
+            cursor.execute("UPDATE `FugueUsers` SET `isDisabled` = 0, `approvedBy` = %s WHERE (`email` = %s)", (request.json['email'], request.json['userEmail'],))
             db.commit()
             
             closeConnection(db, cursor)
@@ -593,7 +613,7 @@ def enterQueue(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT team FROM `Users` WHERE `email` = %s", (request.json['email'],))
+            cursor.execute("SELECT team FROM `FugueUsers` WHERE `email` = %s", (request.json['email'],))
             teamName = cursor.fetchall()[0][0]
         
             if datetime.now().weekday() in (4, 5, 6):
@@ -633,8 +653,8 @@ def enterQueue(db, cursor):
 
             cursor.execute(entryQuery, entryData)
 
-            entryQuery = ("INSERT INTO masterQueue (`UUID`, `ticket`, `description`, `componant`, `email`, `teamName`, `active`, `opened`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
-            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'], request.json['email'], teamName, bool_to_tiny(True), currentDT)
+            entryQuery = ("INSERT INTO FugueMasterQueue (`UUID`, `ticket`, `description`, `componant`, `email`, `teamName`, `active`, `opened`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'], request.json['email'], teamName, True, currentDT)
 
             cursor.execute(entryQuery, entryData)
             db.commit()
@@ -725,7 +745,7 @@ def exitQueue(db, cursor):
                 cursor.execute("UPDATE `" + request.json['componant'].lower() + "` SET position = position - 1 WHERE (`position` > %s)", (position,))
                 db.commit()
             
-            cursor.execute("UPDATE `masterQueue` SET `active` = 0, `closed` = %s, `reasonClosed` = %s WHERE (`UUID` = %s);", (currentDT, request.json['reason'], UUID,))
+            cursor.execute("UPDATE `FugueMasterQueue` SET `active` = 0, `closed` = %s, `reasonClosed` = %s WHERE (`UUID` = %s);", (currentDT, request.json['reason'], UUID,))
             db.commit()
             
             closeConnection(db, cursor)
@@ -786,7 +806,7 @@ def priorityQueueEntry(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT isAdmin, priorityReleaseApproved, team FROM `Users` WHERE `email` = %s", (request.json['email'],))
+            cursor.execute("SELECT isAdmin, priorityReleaseApproved, team FROM `FugueUsers` WHERE `email` = %s", (request.json['email'],))
             userDetails = cursor.fetchall()[0]
 
             canBypassCodeFreezes = False if not tiny_to_bool(userDetails[0]) and not tiny_to_bool(userDetails[1]) else True
@@ -811,13 +831,13 @@ def priorityQueueEntry(db, cursor):
                 return "Ticket already in queue. There may only be one occurance of a ticket at a time.", 403
 
             if canBypassCodeFreezes:
-                cursor.execute("UPDATE `Users` SET `priorityReleaseApproved` = 0 WHERE `email` = %s", (request.json['email'],))
+                cursor.execute("UPDATE `FugueUsers` SET `priorityReleaseApproved` = 0 WHERE `email` = %s", (request.json['email'],))
 
             cursor.execute("SELECT position, email FROM `" + request.json['componant'].lower() + "` WHERE (`position` IN (0, 1))")
             takenPosition = cursor.fetchall()
 
             if len(takenPosition) == 2:
-                cursor.execute("SELECT firstName, lastName FROM `Users` WHERE (`email` = %s)", (takenPosition[1][1],))
+                cursor.execute("SELECT firstName, lastName FROM `FugueUsers` WHERE (`email` = %s)", (takenPosition[1][1],))
                 user = cursor.fetchall()
                 closeConnection(db, cursor)
                 return "" + user[0][0].capitalize() + " " + user[0][1].capitalize() + " is already awaiting a priority release. Please discuss with them which ticket should take priority", 403
@@ -836,8 +856,8 @@ def priorityQueueEntry(db, cursor):
 
             cursor.execute(entryQuery, entryData)
 
-            entryQuery = ("INSERT INTO masterQueue (`UUID`, `ticket`, `description`, `componant`, `email`, `teamName`, `active`, `opened`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
-            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'], request.json['email'], userDetails[2], bool_to_tiny(True), currentDT)
+            entryQuery = ("INSERT INTO FugueMasterQueue (`UUID`, `ticket`, `description`, `componant`, `email`, `teamName`, `active`, `opened`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
+            entryData = (UUID, request.json['ticket'].upper(), request.json['description'], request.json['componant'], request.json['email'], userDetails[2], True, currentDT)
 
             cursor.execute(entryQuery, entryData)
             db.commit()
@@ -856,6 +876,81 @@ def priorityQueueEntry(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
+# Endpoint needs checks (NAME NEEDS TO BE UNIQUE)
+@app.route('/createNewQueue', methods=['POST'])
+@getStarted
+def createNewQueue(db, cursor):
+    if db:
+        try:
+            if not loginUser(cursor, request.json['email'], request.json['password'], True):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            UUID = str(uuid.uuid4().hex)
+            while checkUUID(cursor, queueUUID=UUID):
+                print('new UUID:')
+                UUID = str(uuid.uuid4().hex)
+                print(UUID)
+                sleep(1)
+
+            print(request.json['queueName'])
+
+            query = "CREATE TABLE `" + request.json['queueName'] + "` (`UUID` VARCHAR(32) NOT NULL, `ticket` VARCHAR(15) NOT NULL, `description` VARCHAR(400) NOT NULL, `email` VARCHAR(45) NOT NULL, `teamName` VARCHAR(45) NOT NULL, `opened` DATETIME NOT NULL, `position` SMALLINT NULL DEFAULT NULL, PRIMARY KEY (`UUID`), UNIQUE INDEX `UUID_UNIQUE` (`UUID` ASC) VISIBLE, UNIQUE INDEX `ticket_UNIQUE` (`ticket` ASC) VISIBLE);"
+            cursor.execute(query)
+
+            now = datetime.now()
+            currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
+
+            query = "INSERT INTO `FugueQueues` (`UUID`, `queueName`, `exists`, `createdBy`, `createdAt`) VALUES (%s, %s, %s, %s, %s)"
+            entryData = (UUID, request.json['queueName'], True, request.json['email'], currentDT)
+
+            cursor.execute(query, entryData)
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "Done", 200
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+# Endpoint needs checks
+@app.route('/deleteQueue', methods=['DELETE'])
+@getStarted
+def deleteQueue(db, cursor):
+    if db:
+        try:
+            if not loginUser(cursor, request.json['email'], request.json['password'], True):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            print(request.json['queueName'])
+
+            query = "DROP TABLE `" + request.json['queueName'] + "`"
+            cursor.execute(query)
+
+            now = datetime.now()
+            currentDT = now.strftime("%Y-%m-%d %H:%M:%S")
+
+            query = "UPDATE `FugueQueues` SET `exists` = %s, `deletedBy` = %s, `deletedAt` = %s WHERE `queueName` = %s AND `exists` = %s"
+            entryData = (bool_to_tiny(False), request.json['email'], currentDT, request.json['queueName'], True)
+
+            print(query)
+
+            cursor.execute(query, entryData)
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "Done", 200
+        except:
+            closeConnection(db, cursor)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
 
 # Master queue endpoints
 
@@ -866,7 +961,7 @@ def checkMasterQueue(db, cursor):
         try:
 
             query = "SELECT "
-            query += "email, ticket, componant, active, opened, closed FROM `masterQueue`" if request.json['simple'] else  "* FROM `masterQueue`"
+            query += "email, ticket, componant, active, opened, closed FROM `FugueMasterQueue`" if request.json['simple'] else  "* FROM `FugueMasterQueue`"
     
             if request.json['daysBack']:
                 if isinstance(request.json['daysBack'], int):
@@ -900,7 +995,7 @@ def checkMasterQueue(db, cursor):
                     entriesArray.append(entry.copy())
 
             else:
-                cursor.execute("DESCRIBE `masterQueue`")
+                cursor.execute("DESCRIBE `FugueMasterQueue`")
                 names = cursor.fetchall()
                 
                 for e in entries:
@@ -937,7 +1032,7 @@ def emptyAllQueues(db, cursor):
         cursor.execute("DELETE FROM `" + componant + "`")
         db.commit()
 
-    query = "DELETE FROM `masterQueue`"
+    query = "DELETE FROM `FugueMasterQueue`"
     cursor.execute(query)
     db.commit()
 
@@ -965,49 +1060,51 @@ def createCodeFreeze(db, cursor):
             while checkUUID(cursor, ticketUUID=UUID):
                 UUID = str(uuid.uuid4().hex)
 
-            inEffect = True if request.json['startIn'] == 0 else False
+            if request.json['indefinite'] == True and (request.json['duration'] != False or request.json['duration'] != 0):
+                closeConnection(db, cursor)
+                return "For an indifinite code freeze please set the duration to false or 0", 400
+            elif request.json['indefinite'] == False and (request.json['duration'] == False or request.json['duration'] == 0):
+                closeConnection(db, cursor)
+                return "If the code freeze is not indifinite a duration of one or more days must be provided", 400
+            elif request.json['indefinite'] == False and (request.json['duration'] > 0):
+                endOfCodeFreeze = (datetime.now() + timedelta(days=request.json['startIn']) + timedelta(days=request.json['duration'])).strftime("%Y-%m-%d")
+                durationCounter = request.json['duration']
+            else:
+                endOfCodeFreeze = False
+                durationCounter = '0'
 
+            active = True if request.json['startIn'] == 0 else False
             startOfCodeFreeze = (datetime.now() + timedelta(days=request.json['startIn'])).strftime("%Y-%m-%d")
-            endOfCodeFreeze = (datetime.now() + timedelta(days=request.json['startIn']) + timedelta(days=request.json['duration'])).strftime("%Y-%m-%d")
 
-            entryQuery = ("INSERT INTO codeFreezes (`UUID`, `begins`, `duration`, `ends`, `inEffect`) VALUES (%s, %s, %s, %s, %s)")
-            entryData = (UUID, startOfCodeFreeze, request.json['duration'], endOfCodeFreeze, inEffect)
+            if endOfCodeFreeze:
+                entryQuery = ("INSERT INTO FugueCodeFreezes (`UUID`, `begins`, `durationCounter`, `ends`, `active`, `indefinite`, `createdBy`, `createdAt`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)")
+                entryData = (UUID, startOfCodeFreeze, durationCounter, endOfCodeFreeze, active, 0,  request.json['email'], datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            else:
+                entryQuery = ("INSERT INTO FugueCodeFreezes (`UUID`, `begins`, `durationCounter`, `active`, `indefinite`, `createdBy`, `createdAt`) VALUES (%s, %s, %s, %s, %s, %s, %s)")
+                entryData = (UUID, startOfCodeFreeze, durationCounter, active, 1,  request.json['email'], datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
             cursor.execute(entryQuery, entryData)
+
+            frozenQueues = False if (len(request.json['frozenQueues'])==0 or request.json['frozenQueues']==False) else request.json['frozenQueues']
+
+            if not frozenQueues:
+                cursor.execute("INSERT INTO FugueFrozenQueues (`freezeUUID`, `frozenQueueNames`) VALUES (%s, %s)", (UUID, '*'))
+            else:
+                queues = getQueueNames(cursor)
+                if all(fq in queues for fq in frozenQueues):
+                    for fq in frozenQueues:
+                        cursor.execute("INSERT INTO FugueFrozenQueues (`freezeUUID`, `frozenQueueNames`) VALUES (%s, %s)", (UUID, fq))
+                else:
+                    closeConnection(db, cursor)
+                    return "Incorrect queue name(s) submitted", 400
+
             db.commit()
 
             closeConnection(db, cursor)
             return "Done", 200
 
-        except:
-            closeConnection(db, cursor)
-            return "something went wrong", 520
-    else:
-        closeConnection(db, cursor)
-        return jsonify({'Error': "Database Connection Error"}), 502
-
-
-@app.route('/endActiveCodeFreeze', methods=['DELETE'])
-@getStarted
-def endActiveCodeFreeze(db, cursor):
-
-    if db:
-        try:
-            if not loginUser(cursor, request.json['email'], request.json['password'], True):
-                closeConnection(db, cursor)
-                return "Login Failed", 400
-
-            cursor.execute("SELECT UUID FROM `CodeFreezes` WHERE `inEffect` = 1")
-            UUIDs = cursor.fetchall()
-
-            for UUID in UUIDs:
-                cursor.execute("UPDATE `CodeFreezes` SET `inEffect` = 0 WHERE (`UUID` = %s)", (UUID[0],))    
-            db.commit()
-
-            closeConnection(db, cursor)
-            return "Done", 200
-
-        except:
+        except Exception as e:
+            p(e)
             closeConnection(db, cursor)
             return "something went wrong", 520
     else:
@@ -1025,12 +1122,14 @@ def checkFreezes(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("DESCRIBE `CodeFreezes`")
-            tableNames = cursor.fetchall()
-
-            query = "SELECT * FROM `CodeFreezes`"
-
-            query += " WHERE `inEffect` = 1" if tiny_to_bool(request.json['activeOnly']) else " WHERE (`begins` > CURDATE() AND `inEffect` = 0)" if tiny_to_bool(request.json['futureOnly']) else ""
+            if request.json['simple'] == False:
+                cursor.execute("DESCRIBE `FugueCodeFreezes`")
+                rowNames = cursor.fetchall()
+                query = "SELECT * FROM `FugueCodeFreezes`"
+            else:
+                rowNames = [('UUID',), ('begins',), ('durationCounter',), ('ends',), ('active',), ('indefinite',)]
+                query = "SELECT `UUID`, `begins`, `durationCounter`, `ends`, `active`, `indefinite` FROM `FugueCodeFreezes`"
+            query += " WHERE `active` = 1" if tiny_to_bool(request.json['activeOnly']) else " WHERE (`begins` > CURDATE() AND `active` = 0)" if tiny_to_bool(request.json['futureOnly']) else ""
 
             cursor.execute(query)
             freezes = cursor.fetchall()
@@ -1039,17 +1138,71 @@ def checkFreezes(db, cursor):
                 closeConnection(db, cursor)
                 return "No relevent freezes found", 200
 
+            cursor.execute("SELECT UUID FROM FugueCodeFreezes")
+            results = cursor.fetchall()
+
             returnable = []
             entry = {}
             for f in freezes:
-                for i in range(0, len(tableNames)):
-                    entry[tableNames[i][0]] = f[i]
+                for i in range(0, len(rowNames)):
+                    if rowNames[i][0] == 'UUID':
+                        
+                        cursor.execute("SELECT frozenQueueNames FROM FugueFrozenQueues WHERE freezeUUID = %s", (f[i],))
+
+                        frozenQueues = cursor.fetchall()
+                        if frozenQueues[0][0] == '*':
+                            entry['frozenQueues'] = 'Freeze effects all queues'
+                        else:
+                            entry['frozenQueues'] = []
+                            for frozenQueue in frozenQueues:
+                                entry['frozenQueues'].append(frozenQueue[0])
+                                
+                        if request.json['simple']:
+                            continue
+
+                    if rowNames[i][0] == "active":
+                        entry[rowNames[i][0]] = tiny_to_bool(f[i])
+                    else:
+                        entry[rowNames[i][0]] = f[i]
+
+                    
                 returnable.append(entry.copy())
 
             json_dump = jsonify(returnable)
 
             closeConnection(db, cursor)
             return json_dump, 200
+        except Exception as e:
+            closeConnection(db, cursor)
+            print(e)
+            return "something went wrong", 520
+    else:
+        closeConnection(db, cursor)
+        return jsonify({'Error': "Database Connection Error"}), 502
+
+
+@app.route('/endAllActiveCodeFreezes', methods=['PUT'])
+@getStarted
+def endAllActiveCodeFreezes(db, cursor):
+
+    if db:
+        try:
+            if not loginUser(cursor, request.json['email'], request.json['password'], True):
+                closeConnection(db, cursor)
+                return "Login Failed", 400
+
+            cursor.execute("SELECT UUID FROM `FugueCodeFreezes` WHERE `active` = 1")
+            UUIDs = cursor.fetchall()
+
+            print(UUIDs)
+
+            for UUID in UUIDs:
+                cursor.execute("UPDATE `FugueCodeFreezes` SET `active` = 0, `endedBy` = %s, `endedAt` = %s WHERE `UUID` = %s", (request.json['email'], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), UUID[0]))
+            db.commit()
+
+            closeConnection(db, cursor)
+            return "All active code freezes have been ended", 200
+
         except:
             closeConnection(db, cursor)
             return "something went wrong", 520
@@ -1067,7 +1220,7 @@ def endFreeze(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("DELETE FROM `CodeFreezes` WHERE (`UUID` = %s)", (request.json['codeFreezeUUID'],))
+            cursor.execute("DELETE FROM `FugueCodeFreezes` WHERE (`UUID` = %s)", (request.json['codeFreezeUUID'],))
             db.commit()
 
             closeConnection(db, cursor)
@@ -1089,7 +1242,7 @@ def allowEmployeeBypassCodeFreeze(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            cursor.execute("SELECT UUID, isAdmin, priorityReleaseApproved, firstName, lastName FROM `Users` WHERE `email` = %s", (request.json['employeeEmail'],))
+            cursor.execute("SELECT UUID, isAdmin, priorityReleaseApproved, firstName, lastName FROM `FugueUsers` WHERE `email` = %s", (request.json['employeeEmail'],))
             
             employee = cursor.fetchall()
 
@@ -1104,13 +1257,13 @@ def allowEmployeeBypassCodeFreeze(db, cursor):
                 return "Employee is admin and doesn't need override", 200
 
             if tiny_to_bool(employee[2]):
-                cursor.execute("UPDATE `Users` SET `priorityReleaseApproved` = 0 WHERE (`UUID` = %s)", (employee[0],))
+                cursor.execute("UPDATE `FugueUsers` SET `priorityReleaseApproved` = 0 WHERE (`UUID` = %s)", (employee[0],))
                 db.commit()
 
                 closeConnection(db, cursor)
                 return ("" + employee[3] + " " + employee[4] + " no longer has permission to release today"), 200
 
-            cursor.execute("UPDATE `Users` SET `priorityReleaseApproved` = 1 WHERE (`UUID` = %s)", (employee[0],))
+            cursor.execute("UPDATE `FugueUsers` SET `priorityReleaseApproved` = 1 WHERE (`UUID` = %s)", (employee[0],))
             db.commit()
 
             closeConnection(db, cursor)
@@ -1146,4 +1299,7 @@ def allowEmployeeBypassCodeFreeze(db, cursor):
 
 
 if __name__ == '__main__':
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(func=nightlyFrozenQueueUpdate, trigger='cron', hour=22, minute=14, second=0, timezone="UTC")
+    scheduler.start()
     app.run(port=4400)
