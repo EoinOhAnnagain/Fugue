@@ -18,18 +18,45 @@ def p(p):
     print(p)
 
 
+cronHour = 21 - 1
+cronMin = 37
+
 def nightlyFrozenQueueUpdate():
 
     db = create_db_connection()
     cursor = db.cursor()
 
-    cursor.execute('SELECT UUID, begins, durationCounter, ends, active, indefinite FROM FugueCodeFreezes WHERE endedAt IS NOT NULL')
+    cursor.execute('SELECT UUID, begins, durationCounter, ends, active, indefinite FROM FugueCodeFreezes WHERE endedAt IS NULL')
 
     test = cursor.fetchall()
 
     for t in test:
-        p(t)
+        if tiny_to_bool(t[5]):
+            query = 'UPDATE FugueCodeFreezes SET durationCounter = %s WHERE UUID = %s'
+            queryValues = (t[2]+1, t[0])
+        else:
+            query = 'UPDATE FugueCodeFreezes SET durationCounter = %s'
+            if t[2]-1 <= 0:
+                query += ', endedBy = %s, endedAt = %s, active = %s'
+                queryValues = (t[2]-1, 'timeOut', datetime.now().strftime("%Y-%m-%d %H:%M:%S"), False, t[0])
+            else:
+                queryValues = (t[2]-1, t[0])
+            query += ' WHERE UUID = %s'
+            
+        print(query)
+        print(queryValues)
+
+        cursor.execute(query, queryValues)
     
+    db.commit()
+
+
+
+    cursor.execute('SELECT UUID, begins, durationCounter, ends, active, indefinite FROM FugueCodeFreezes WHERE endedAt IS NULL')
+    test = cursor.fetchall()
+
+    for t in test:
+        p(t)
 
 
 
@@ -1210,7 +1237,7 @@ def endAllActiveCodeFreezes(db, cursor):
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
 
-
+# (Allow anyone to create but only the creartor or an admin to end)
 @app.route('/endCodeFreeze', methods=['DELETE'])
 @getStarted
 def endFreeze(db, cursor):
@@ -1299,7 +1326,8 @@ def allowEmployeeBypassCodeFreeze(db, cursor):
 
 
 if __name__ == '__main__':
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(func=nightlyFrozenQueueUpdate, trigger='cron', hour=22, minute=14, second=0, timezone="UTC")
-    scheduler.start()
+    # scheduler = BackgroundScheduler()
+    # scheduler.add_job(func=nightlyFrozenQueueUpdate, trigger='cron', hour=cronHour, minute=cronMin, second=5, timezone="UTC")
+    # scheduler.start()
+    nightlyFrozenQueueUpdate()
     app.run(port=4400)
