@@ -18,9 +18,10 @@ def p(p):
     print(p)
 
 
-cronHour = 21 - 1
-cronMin = 37
+cronHour = 14 - 1
+cronMin = 46
 
+# Future code freezes need to be activated
 def nightlyFrozenQueueUpdate():
 
     db = create_db_connection()
@@ -31,7 +32,10 @@ def nightlyFrozenQueueUpdate():
     test = cursor.fetchall()
 
     for t in test:
-        if tiny_to_bool(t[5]):
+        if tiny_to_bool(t[4]) == False and str(t[1]) == datetime.now().strftime("%Y-%m-%d"):
+            query = 'UPDATE FugueCodeFreezes SET active = %s WHERE UUID = %s'
+            queryValues = (True, t[0])
+        elif tiny_to_bool(t[5]):
             query = 'UPDATE FugueCodeFreezes SET durationCounter = %s WHERE UUID = %s'
             queryValues = (t[2]+1, t[0])
         else:
@@ -42,22 +46,10 @@ def nightlyFrozenQueueUpdate():
             else:
                 queryValues = (t[2]-1, t[0])
             query += ' WHERE UUID = %s'
-            
-        print(query)
-        print(queryValues)
 
         cursor.execute(query, queryValues)
     
     db.commit()
-
-
-
-    cursor.execute('SELECT UUID, begins, durationCounter, ends, active, indefinite FROM FugueCodeFreezes WHERE endedAt IS NULL')
-    test = cursor.fetchall()
-
-    for t in test:
-        p(t)
-
 
 
 """ Wrapped method to setup endpoint """
@@ -1326,8 +1318,7 @@ def allowEmployeeBypassCodeFreeze(db, cursor):
 
 
 if __name__ == '__main__':
-    # scheduler = BackgroundScheduler()
-    # scheduler.add_job(func=nightlyFrozenQueueUpdate, trigger='cron', hour=cronHour, minute=cronMin, second=5, timezone="UTC")
-    # scheduler.start()
-    nightlyFrozenQueueUpdate()
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(func=nightlyFrozenQueueUpdate, trigger='cron', hour=cronHour, minute=cronMin, second=5, timezone="UTC")
+    scheduler.start()
     app.run(port=4400)
