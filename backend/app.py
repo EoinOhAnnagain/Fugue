@@ -18,10 +18,6 @@ def p(p):
     print(p)
 
 
-cronHour = 14 - 1
-cronMin = 46
-
-# Future code freezes need to be activated
 def nightlyFrozenQueueUpdate():
 
     db = create_db_connection()
@@ -1319,6 +1315,6 @@ def allowEmployeeBypassCodeFreeze(db, cursor):
 
 if __name__ == '__main__':
     scheduler = BackgroundScheduler()
-    scheduler.add_job(func=nightlyFrozenQueueUpdate, trigger='cron', hour=cronHour, minute=cronMin, second=5, timezone="UTC")
+    scheduler.add_job(func=nightlyFrozenQueueUpdate, trigger='cron', hour=0, minute=0, second=5, timezone="UTC")
     scheduler.start()
     app.run(port=4400)
