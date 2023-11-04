@@ -908,7 +908,10 @@ def createNewQueue(db, cursor):
                 print(UUID)
                 sleep(1)
 
-            print(request.json['queueName'])
+            if request.json['queueName'] in getQueueNames(cursor):
+                closeConnection(db, cursor)
+                return "Requested queue already exists", 401
+            
 
             query = "CREATE TABLE `" + request.json['queueName'] + "` (`UUID` VARCHAR(32) NOT NULL, `ticket` VARCHAR(15) NOT NULL, `description` VARCHAR(400) NOT NULL, `email` VARCHAR(45) NOT NULL, `teamName` VARCHAR(45) NOT NULL, `opened` DATETIME NOT NULL, `position` SMALLINT NULL DEFAULT NULL, PRIMARY KEY (`UUID`), UNIQUE INDEX `UUID_UNIQUE` (`UUID` ASC) VISIBLE, UNIQUE INDEX `ticket_UNIQUE` (`ticket` ASC) VISIBLE);"
             cursor.execute(query)
@@ -942,7 +945,9 @@ def deleteQueue(db, cursor):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            print(request.json['queueName'])
+            if request.json['queueName'] not in getQueueNames(cursor):
+                closeConnection(db, cursor)
+                return "Queue does not exist", 401
 
             query = "DROP TABLE `" + request.json['queueName'] + "`"
             cursor.execute(query)
