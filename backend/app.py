@@ -167,7 +167,7 @@ def checkUUID(cursor, userUUID=False, ticketUUID=False, freezeUUID=False, queueU
         return False
 
 
-""" Method to check if a user exists in the database """
+""" Method to check if a user exists """
 def checkForUser(cursor, email, hashedPassword=False):
     
     cursor.execute("SELECT COUNT(*) from `FugueUsers` WHERE `email` = %s", (email,))
@@ -183,19 +183,18 @@ def closeConnection(db, cursor):
     db.close()
 
 
-""" Method to test the users input string. Ta """
-def testUserInputString(db, cursor, string, key, length):
+""" Method to test the users input string """
+def testUserInputString(string, key, length):
     if type(string) != str:
-        closeConnection(db, cursor)
         return key + " isn't string"
     elif len(request.json["firstName"]) > length:
-        closeConnection(db, cursor)
         return key + " is too long"
     elif len(request.json["firstName"]) < 3:
-        closeConnection(db, cursor)
         return key + " is too short"
-    elif key == 'email' and not (string.endswith('@datto.com') or string.endswith('@kaseya.com')):
-        closeConnection(db, cursor)
+    elif key == 'email':
+        for domianName in config.approvedEmailDomainNames:
+            if string.endswith(domianName):
+                return False        
         return "Bad email submitted"
     else:
         return False
@@ -217,7 +216,7 @@ def loginUser(cursor, email, password, admin=False):
         
 
 """ Method to check if there is a general code freeze in effect. Returns True if there is a code freeze. Takes in the cursor """
-def checkForCodeFreeze(cursor):
+def checkForQueueFreeze(cursor):
     
     cursor.execute("SELECT COUNT(*) FROM `FugueCodeFreezes` WHERE begins <= CURDATE() AND ends >= CURDATE() AND active = true;")
     return True if (cursor.fetchall())[0][0] != 0 else False 
@@ -262,25 +261,25 @@ def registerNewUser(db, cursor):
     if db:
 
         UUID = str(uuid.uuid4().hex)
-        while checkUUID(cursor, employeeUUID=UUID):
+        while checkUUID(cursor, userUUID=UUID):
             UUID = str(uuid.uuid4().hex)
 
         if checkForUser(cursor, request.json['email']):
             closeConnection(db, cursor)
             return "email is already in use", 400
         
-        if testUserInputString(db, cursor, request.json['firstName'].lower(), 'firstName', 45) != False:
+        if testUserInputString(request.json['firstName'].lower(), 'firstName', 45) != False:
             closeConnection(db, cursor)
-            return testUserInputString(db, cursor, request.json['firstName'].lower(), 'firstName', 45), 400
-        if testUserInputString(db, cursor, request.json['lastName'].lower(), 'lastName', 45) != False:
+            return testUserInputString(request.json['firstName'].lower(), 'firstName', 45), 400
+        if testUserInputString(request.json['lastName'].lower(), 'lastName', 45) != False:
             closeConnection(db, cursor)
-            return testUserInputString(db, cursor, request.json['lastName'].lower(), 'lastName', 45), 400
-        if testUserInputString(db, cursor, request.json['email'], 'email', 100) != False:
+            return testUserInputString(request.json['lastName'].lower(), 'lastName', 45), 400
+        if testUserInputString(request.json['email'], 'email', 100) != False:
             closeConnection(db, cursor)
-            return testUserInputString(db, cursor, request.json['email'], 'email', 100), 400
-        if testUserInputString(db, cursor, request.json['team'].lower(), 'team', 45) != False:
+            return testUserInputString(request.json['email'], 'email', 100), 400
+        if testUserInputString(request.json['team'].lower(), 'team', 45) != False:
             closeConnection(db, cursor)
-            return testUserInputString(db, cursor, request.json['team'].lower(), 'team', 45), 400
+            return testUserInputString(request.json['team'].lower(), 'team', 45), 400
 
         hashedPassword = password_hash(request.json['email'], request.json['password'])
 
@@ -340,13 +339,15 @@ def toggleAdmin(db, cursor):
             cursor.execute("SELECT COUNT(*) FROM FugueUsers WHERE isAdmin = 1")
             adminCount = cursor.fetchall()[0][0]
 
+            target = request.json['targetEmail']
+
             if adminCount == 0:
             
                 if not loginUser(cursor, request.json['email'], request.json['password']):
                     closeConnection(db, cursor)
                     return "Login Failed", 400
 
-                cursor.execute("UPDATE `FugueUsers` SET `isAdmin` = 1 WHERE (`email` = %s)", (request.json['targetEmail'],))
+                cursor.execute("UPDATE `FugueUsers` SET `isAdmin` = 1 WHERE (`email` = %s)", (target,))
                 db.commit()
 
                 closeConnection(db, cursor)
@@ -354,32 +355,31 @@ def toggleAdmin(db, cursor):
 
             else:
 
-
                 if not loginUser(cursor, request.json['email'], request.json['password'], True):
                     closeConnection(db, cursor)
                     return "Login Failed", 400
 
-                if adminCount == 1 and request.json['email'] == request.json['targetEmail']:
+                if adminCount == 1 and request.json['email'] == target:
                     closeConnection(db, cursor)
                     return "Cannot toggle as you are the only admin. Create another admin first", 403
 
-                cursor.execute("SELECT COUNT(*), isAdmin FROM `FugueUsers` WHERE `email` = %s", (request.json['targetEmail'],))
+                cursor.execute("SELECT COUNT(*), isAdmin FROM `FugueUsers` WHERE `email` = %s", (target,))
                 userFound = cursor.fetchall()[0]
 
                 if userFound[0] == 0:
                     closeConnection(db, cursor)
-                    return "Target not found", 403
+                    return target + " not found", 403
 
                 if userFound[1] == 1:
-                    cursor.execute("UPDATE `FugueUsers` SET `isAdmin` = 0 WHERE (`email` = %s)", (request.json['targetEmail'],))
+                    cursor.execute("UPDATE `FugueUsers` SET `isAdmin` = 0 WHERE (`email` = %s)", (target,))
                     db.commit()
                     closeConnection(db, cursor)
-                    return "Target is no longer an Admin", 200
+                    return target + " is no longer an Admin", 200
                 else:
-                    cursor.execute("UPDATE `FugueUsers` SET `isAdmin` = 1 WHERE (`email` = %s)", (request.json['targetEmail'],))
+                    cursor.execute("UPDATE `FugueUsers` SET `isAdmin` = 1 WHERE (`email` = %s)", (target,))
                     db.commit()
                     closeConnection(db, cursor)
-                    return "Target is now an Admin", 200
+                    return target + " is now an Admin", 200
 
         except:
             closeConnection(db, cursor)
@@ -444,22 +444,24 @@ def deleteUser(db, cursor):
     if db:
         try:
 
+            target = request.json['targetEmail']
+
             if not loginUser(cursor, request.json['email'], request.json['password'], True):
                 closeConnection(db, cursor)
                 return "Login Failed", 400
 
-            if request.json['email'] == request.json['targetEmail']:
+            if request.json['email'] == target:
                 closeConnection(db, cursor)
                 return "This endpoint is not fo deleting oneslef", 403
 
-            cursor.execute("SELECT COUNT(*) FROM `FugueUsers` WHERE (`email` = %s)", (request.json['targetEmail'],))
+            cursor.execute("SELECT COUNT(*) FROM `FugueUsers` WHERE (`email` = %s)", (target,))
             userFound = cursor.fetchall()[0]
 
             if userFound[0] == 0:
                 closeConnection(db, cursor)
                 return "User not found", 403
 
-            cursor.execute("SELECT UUID FROM FugueUsers WHERE email = %s", (request.json['targetEmail'],))
+            cursor.execute("SELECT UUID FROM FugueUsers WHERE email = %s", (target,))
             userUUID = cursor.fetchall()[0][0]
             cursor.execute("DELETE FROM `FugueUsers` WHERE (`UUID` = %s);", (userUUID,))
             db.commit()
@@ -635,7 +637,7 @@ def enterQueue(db, cursor):
                 closeConnection(db, cursor)
                 return "Releases may only be done Monday -> Thursday. Please enter the queue again on Monday morning", 400
         
-            if checkForCodeFreeze(cursor):
+            if checkForQueueFreeze(cursor):
                 return "There is a code freeze in effect. New entries cannot be added to the queue until the code freeze ends", 403
 
             if len(request.json['description']) > 400:
@@ -684,9 +686,9 @@ def enterQueue(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
-@app.route('/updateTicketDescription', methods=['PUT'])
+@app.route('/updateEntryDescription', methods=['PUT'])
 @getStarted
-def updateTicketDescription(db, cursor):
+def updateEntryDescription(db, cursor):
     if db:
         try:
             if not loginUser(cursor, request.json['email'], request.json['password']):
@@ -775,9 +777,9 @@ def exitQueue(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
-@app.route('/releasing', methods=['PUT'])
+@app.route('/headOfQueueExecuting', methods=['PUT'])
 @getStarted
-def releasing(db, cursor):
+def headOfQueueExecuting(db, cursor):
     if db:
         try:
             if not loginUser(cursor, request.json['email'], request.json['password']):
@@ -891,7 +893,6 @@ def priorityQueueEntry(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
-# Endpoint needs checks (NAME NEEDS TO BE UNIQUE)
 @app.route('/createNewQueue', methods=['POST'])
 @getStarted
 def createNewQueue(db, cursor):
@@ -935,7 +936,6 @@ def createNewQueue(db, cursor):
         return jsonify({'Error': "Database Connection Error"}), 502
 
 
-# Endpoint needs checks
 @app.route('/deleteQueue', methods=['DELETE'])
 @getStarted
 def deleteQueue(db, cursor):
@@ -958,8 +958,6 @@ def deleteQueue(db, cursor):
             query = "UPDATE `FugueQueues` SET `exists` = %s, `deletedBy` = %s, `deletedAt` = %s WHERE `queueName` = %s AND `exists` = %s"
             entryData = (bool_to_tiny(False), request.json['email'], currentDT, request.json['queueName'], True)
 
-            print(query)
-
             cursor.execute(query, entryData)
             db.commit()
 
@@ -971,6 +969,8 @@ def deleteQueue(db, cursor):
     else:
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
+
+
 
 # Master queue endpoints
 
@@ -1230,7 +1230,7 @@ def endAllActiveCodeFreezes(db, cursor):
         closeConnection(db, cursor)
         return jsonify({'Error': "Database Connection Error"}), 502
 
-# (Allow anyone to create but only the creartor or an admin to end)
+
 @app.route('/endCodeFreeze', methods=['DELETE'])
 @getStarted
 def endFreeze(db, cursor):

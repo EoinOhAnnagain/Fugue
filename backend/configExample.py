@@ -8,4 +8,6 @@ database = "" #Insert database to be accessed here.
 
 activationLocations = [] #Insert 7 integers between 0 and 32 here
 
+approvedEmailDomainNames = [""] #Insert list of approved email domains here.
+
 salts = [""] #Insert list of salts here.
